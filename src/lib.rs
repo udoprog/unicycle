@@ -160,6 +160,7 @@ where
                 *wake_alternate = wake_current.swap(next);
 
                 // Make sure no one else is using the alternate wake.
+                //
                 // Safety: We are the only one swapping wake_alternate, so at
                 // this point we know that we have access to the most recent
                 // active set. We _must_ call wait_for_unique_access before we

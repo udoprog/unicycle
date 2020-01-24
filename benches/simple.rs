@@ -12,8 +12,8 @@ use futures::task::Poll;
 use std::collections::VecDeque;
 use std::thread;
 
-const NUM: usize = 10_000;
-const EXPECTED: usize = 50005000;
+const NUM: usize = 100;
+const EXPECTED: usize = 5050;
 
 #[bench]
 fn oneshots_unicycle(b: &mut Bencher) {
