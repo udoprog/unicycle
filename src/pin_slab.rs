@@ -180,8 +180,8 @@ impl<T> Drop for PinSlab<T> {
 fn calculate_key(key: usize) -> (usize, usize, usize) {
     assert!(key < (1usize << (mem::size_of::<usize>() * 8 - 1)));
 
-    let slot =
-        ((mem::size_of::<usize>() * 8) as usize - key.leading_zeros() as usize).saturating_sub(FIRST_SLOT_MASK);
+    let slot = ((mem::size_of::<usize>() * 8) as usize - key.leading_zeros() as usize)
+        .saturating_sub(FIRST_SLOT_MASK);
 
     let (start, end) = if key < FIRST_SLOT_SIZE {
         (0, FIRST_SLOT_SIZE)

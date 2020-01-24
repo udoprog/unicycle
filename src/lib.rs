@@ -137,7 +137,7 @@ where
 
 impl<F> Stream for Unordered<F>
 where
-    F: Unpin + Future,
+    F: Future,
 {
     type Item = F::Output;
 
