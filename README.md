@@ -28,6 +28,10 @@ should be polled the next time `Unordered` is.
 
 [slab]: https://github.com/carllerche/slab
 
+## TODO
+
+* Build our own sparse atomic bitset. We happen to know exactly how many futures will ever touch any given bitset that is swapped in. That allows us to pre-allocate - or grow to - exactly as much space as we need.
+
 ## Examples
 
 ```rust

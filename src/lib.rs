@@ -96,11 +96,14 @@ where
 {
     /// Construct a new, empty [Unordered].
     pub fn new() -> Self {
+        let alternate = WakeSet::new();
+        alternate.lock_write();
+
         Self {
             pollable: Vec::with_capacity(16),
             slab: PinSlab::new(),
             wake_current: Arc::new(SharedWakeSet::new()),
-            wake_alternate: WakeSet::new_raw(),
+            wake_alternate: Box::into_raw(Box::new(alternate)),
             results: VecDeque::new(),
         }
     }
@@ -156,6 +159,10 @@ where
             }
 
             let wake_last = {
+                unsafe {
+                    (**wake_alternate).unlock_write();
+                }
+
                 let next = mem::replace(wake_alternate, ptr::null_mut());
                 *wake_alternate = wake_current.swap(next);
 
@@ -168,7 +175,7 @@ where
                 // this point inner futures will still have access to references
                 // to it (under a lock!). We must wait for these to expire.
                 unsafe {
-                    (**wake_alternate).wait_for_unique_access();
+                    (**wake_alternate).lock_write();
                     &mut **wake_alternate
                 }
             };

@@ -15,15 +15,7 @@ async fn test_bitset() {
 
     let start = Instant::now();
 
-    let mut count = 0u32;
-
-    while let Some(_) = futures.next().await {
-        count += 1;
-
-        if count == 1_000 {
-            break;
-        }
-    }
+    while let Some(_) = futures.next().await {}
 
     println!("bitset: {:?}", Instant::now().duration_since(start));
 }
@@ -42,15 +34,7 @@ async fn test_futures() {
 
     let start = Instant::now();
 
-    let mut count = 0u32;
-
-    while let Some(_) = futures.next().await {
-        count += 1;
-
-        if count == 1_000 {
-            break;
-        }
-    }
+    while let Some(_) = futures.next().await {}
 
     println!("futures: {:?}", Instant::now().duration_since(start));
 }

@@ -10,6 +10,8 @@ use std::{mem, pin::Pin, ptr};
 
 // Size of the first slot.
 const FIRST_SLOT_SIZE: usize = 16;
+// The initial number of bits to ignore for the first slot.
+const FIRST_SLOT_MASK: usize = 4;
 
 /// Pre-allocated storage for a uniform data type.
 #[derive(Clone)]
@@ -179,12 +181,12 @@ fn calculate_key(key: usize) -> (usize, usize, usize) {
     assert!(key < (1usize << (mem::size_of::<usize>() * 8 - 1)));
 
     let slot =
-        ((mem::size_of::<usize>() * 8) as usize - key.leading_zeros() as usize).saturating_sub(4);
+        ((mem::size_of::<usize>() * 8) as usize - key.leading_zeros() as usize).saturating_sub(FIRST_SLOT_MASK);
 
     let (start, end) = if key < FIRST_SLOT_SIZE {
         (0, FIRST_SLOT_SIZE)
     } else {
-        (8usize << slot, 8usize << (slot + 1))
+        (FIRST_SLOT_SIZE << (slot - 1), FIRST_SLOT_SIZE << slot)
     };
 
     (slot, key - start, end - start)

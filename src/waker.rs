@@ -15,11 +15,7 @@ use std::{
 
 fn try_wake(wake_set: &SharedWakeSet, index: usize) -> bool {
     let wake_set = wake_set.load();
-
-    // Nothing to wake, the wake set has been dropped.
-    if wake_set.is_null() {
-        return true;
-    }
+    debug_assert!(!wake_set.is_null());
 
     // Safety: We know wake_set references valid memory, because in order to
     // have access to `SharedWakeSet`, we must also hold an `Arc` to it - either
@@ -32,7 +28,7 @@ fn try_wake(wake_set: &SharedWakeSet, index: usize) -> bool {
     let wake_set = unsafe { &*wake_set };
 
     if let Some(_guard) = wake_set.try_read_lock() {
-        wake_set.unchecked_set(index);
+        wake_set.set(index);
         true
     } else {
         false
@@ -125,7 +121,7 @@ impl WakerOwned {
     unsafe fn wake(this: *const ()) {
         let this = Box::from_raw(this as *mut Self);
         wake(&*this.wake_set, this.index);
-        this.parent.wake_by_ref();
+        this.parent.wake();
     }
 
     unsafe fn wake_by_ref(this: *const ()) {

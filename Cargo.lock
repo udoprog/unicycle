@@ -538,6 +538,7 @@ dependencies = [
  "futures",
  "futures-core",
  "hibitset",
+ "lock_api",
  "parking_lot",
  "rand",
  "tokio",
