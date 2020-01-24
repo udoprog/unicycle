@@ -11,7 +11,8 @@ use std::{mem, pin::Pin, ptr};
 // Size of the first slot.
 const FIRST_SLOT_SIZE: usize = 16;
 // The initial number of bits to ignore for the first slot.
-const FIRST_SLOT_MASK: usize = 4;
+const FIRST_SLOT_MASK: usize =
+    std::mem::size_of::<usize>() * 8 - FIRST_SLOT_SIZE.leading_zeros() as usize - 1;
 
 /// Pre-allocated storage for a uniform data type.
 #[derive(Clone)]
