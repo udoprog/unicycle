@@ -1,0 +1,18 @@
+[package]
+name = "unicycle"
+version = "0.1.0"
+authors = ["John-John Tedro <udoprog@tedro.se>"]
+edition = "2018"
+license = "MIT/Apache-2.0"
+readme = "README.md"
+
+[dependencies]
+futures-core = "0.3.1"
+hibitset = "0.6.2"
+parking_lot = "0.10.0"
+
+[dev-dependencies]
+tokio = {git = "https://github.com/tokio-rs/tokio", version = "0.2.10", features = ["rt-core", "stream", "time", "macros"]}
+checkers = "0.5.6"
+rand = "0.7.3"
+futures = "0.3.1"

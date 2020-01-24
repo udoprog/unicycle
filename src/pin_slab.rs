@@ -1,0 +1,207 @@
+//! A slab-like, pre-allocated storage where the slab is divided into immovable
+//! slots.
+//!
+//! Converted from <https://github.com/carllerche/slab>, this slab however
+//! contains a growable collection of fixed-size regions called slots.
+//! This allows is to store immovable objects inside the slab, since growing the
+//! collection doesn't require the existing slots to move.
+
+use std::{mem, pin::Pin, ptr};
+
+/// Pre-allocated storage for a uniform data type.
+#[derive(Clone)]
+pub(crate) struct PinSlab<T> {
+    // Slots of memory. Once one has been allocated it is never moved.
+    // This allows us to store entries in there and fetch them as `Pin<&mut T>`.
+    slots: Vec<ptr::NonNull<Entry<T>>>,
+    // Number of Filled elements currently in the slab
+    len: usize,
+    // Offset of the next available slot in the slab.
+    next: usize,
+    /// The size of a slot.
+    slot_size: usize,
+}
+
+enum Entry<T> {
+    // Each slot is pre-allocated with entries of `None`.
+    None,
+    // Removed entries are replaced with the vacant tomb stone, pointing to the
+    // next vacant entry.
+    Vacant(usize),
+    // An entry that is occupied with a value.
+    Occupied(T),
+}
+
+impl<T> PinSlab<T> {
+    /// Construct a new, empty [PinSlab] with the default slot size.
+    pub(crate) fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            next: 0,
+            len: 0,
+            slot_size: 512,
+        }
+    }
+
+    /// Test if the pin slab is empty.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Insert a value into the pin slab.
+    pub(crate) fn insert(&mut self, val: T) -> usize {
+        let key = self.next;
+        self.insert_at(key, val);
+        key
+    }
+
+    /// Access the given key as a pinned mutable value.
+    pub(crate) fn get_pin_mut(&mut self, key: usize) -> Option<Pin<&mut T>> {
+        let slot = key / self.slot_size;
+        let slot = *self.slots.get_mut(slot)?;
+
+        let offset = key % self.slot_size;
+
+        // Safety: all slots are fully allocated and initialized in `new_slot`.
+        // As long as we have access to it, we know that we will only find
+        // initialized entries assuming offset < slot_size.
+        debug_assert!(offset < self.slot_size);
+        let entry = match unsafe { &mut *slot.as_ptr().add(offset) } {
+            Entry::Occupied(entry) => entry,
+            _ => return None,
+        };
+
+        // Safety: all storage is pre-allocated in chunks, and each chunk
+        // doesn't move. We only provide mutators to drop the storage through
+        // `remove` (but it doesn't return it).
+        Some(unsafe { Pin::new_unchecked(entry) })
+    }
+
+    /// Remove the key from the slab.
+    ///
+    /// Returns `true` if the entry was removed, `false` otherwise.
+    /// Removing a key which does not exist have no effect.
+    ///
+    /// We need to take care that we don't move it, hence we only perform
+    /// operations over pointers below.
+    pub(crate) fn remove(&mut self, key: usize) -> bool {
+        let slot = key / self.slot_size;
+        let offset = key % self.slot_size;
+
+        let slot = match self.slots.get_mut(slot) {
+            Some(slot) => *slot,
+            None => return false,
+        };
+
+        // Safety: all slots are fully allocated and initialized in `new_slot`.
+        // As long as we have access to it, we know that we will only find
+        // initialized entries assuming offset < slot_size.
+        debug_assert!(offset < self.slot_size);
+        unsafe {
+            let entry = slot.as_ptr().add(offset);
+
+            match &*entry {
+                Entry::Occupied(..) => (),
+                _ => return false,
+            }
+
+            ptr::drop_in_place(entry);
+            ptr::write(entry, Entry::Vacant(self.next));
+            self.len -= 1;
+            self.next = key;
+        }
+
+        true
+    }
+
+    /// Construct a new slot.
+    fn new_slot(&self) -> ptr::NonNull<Entry<T>> {
+        let mut d = Vec::with_capacity(self.slot_size);
+        for _ in 0..self.slot_size {
+            d.push(Entry::None);
+        }
+
+        let ptr = d.as_mut_ptr();
+        mem::forget(d);
+
+        // Safety: We just initialized the pointer to be non-null above.
+        unsafe { ptr::NonNull::new_unchecked(ptr) }
+    }
+
+    /// Insert a value at the given slot.
+    fn insert_at(&mut self, key: usize, val: T) {
+        let slot = key / self.slot_size;
+
+        if let Some(slot) = self.slots.get_mut(slot) {
+            let offset = key % self.slot_size;
+
+            // Safety: all slots are fully allocated and initialized in
+            // `new_slot`. As long as we have access to it, we know that we will
+            // only find initialized entries assuming offset < slot_size.
+            // We also know it's safe to have unique access to _any_ slots,
+            // since we have unique access to the slab in this function.
+            debug_assert!(offset < self.slot_size);
+            let entry = unsafe { &mut *slot.as_ptr().add(offset) };
+
+            self.next = match *entry {
+                Entry::None => key + 1,
+                Entry::Vacant(next) => next,
+                // NB: unreachable because insert_at is an internal function,
+                // which can only be appropriately called on non-occupied
+                // entries. This is however, not a safety concern.
+                _ => unreachable!(),
+            };
+
+            *entry = Entry::Occupied(val);
+        } else {
+            unsafe {
+                let slot = self.new_slot();
+                *slot.as_ptr() = Entry::Occupied(val);
+                self.slots.push(slot);
+                self.next = key + 1;
+            }
+        }
+
+        self.len += 1;
+    }
+}
+
+impl<T> Drop for PinSlab<T> {
+    fn drop(&mut self) {
+        // Iterate over all slots and reconstruct each vector - then deallocate
+        // it.
+        for entry in &mut self.slots {
+            // reconstruct the vector for the slot.
+            drop(unsafe { Vec::from_raw_parts(entry.as_ptr(), self.slot_size, self.slot_size) });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PinSlab;
+
+    #[global_allocator]
+    static ALLOCATOR: checkers::Allocator = checkers::Allocator::system();
+
+    #[checkers::test]
+    fn insert_get_remove_many() {
+        let mut slab = PinSlab::new();
+
+        let mut keys = Vec::new();
+
+        for i in 0..1024 {
+            keys.push((i as u128, slab.insert(Box::new(i as u128))));
+        }
+
+        for (expected, key) in keys.iter().copied() {
+            let value = slab.get_pin_mut(key).expect("value to exist");
+            assert_eq!(expected, **value.as_ref());
+            assert!(slab.remove(key));
+        }
+
+        for (_, key) in keys.iter().copied() {
+            assert!(slab.get_pin_mut(key).is_none());
+        }
+    }
+}
