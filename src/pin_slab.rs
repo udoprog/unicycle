@@ -25,6 +25,9 @@ pub(crate) struct PinSlab<T> {
     next: usize,
 }
 
+unsafe impl<T> Send for PinSlab<T> {}
+unsafe impl<T> Sync for PinSlab<T> {}
+
 enum Entry<T> {
     // Each slot is pre-allocated with entries of `None`.
     None,

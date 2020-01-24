@@ -88,6 +88,9 @@ where
     results: VecDeque<F::Output>,
 }
 
+unsafe impl<F> Send for Unordered<F> where F: Future {}
+unsafe impl<F> Sync for Unordered<F> where F: Future {}
+
 impl<F> Unpin for Unordered<F> where F: Future {}
 
 impl<F> Unordered<F>
