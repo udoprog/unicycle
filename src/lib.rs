@@ -108,6 +108,11 @@ where
         }
     }
 
+    /// Test if the collection of futures is empty.
+    pub fn is_empty(&self) -> bool {
+        self.slab.is_empty()
+    }
+
     /// Add the given future to the [Unordered] stream.
     pub fn push(&mut self, future: F) {
         let index = self.slab.insert(future);
