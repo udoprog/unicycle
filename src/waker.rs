@@ -7,9 +7,13 @@
 //! * `WakerOwned` - which takes full ownership of the plumbing necessary to
 //!   wake the task from another thread.
 
-use crate::wake_set::SharedWakeSet;
+use crate::{wake_set::SharedWakeSet, Shared};
 use std::{
-    sync::Arc,
+    ptr,
+    sync::{
+        atomic::{AtomicPtr, Ordering},
+        Arc,
+    },
     task::{RawWaker, RawWakerVTable, Waker},
 };
 
@@ -43,31 +47,21 @@ fn wake(wake_set: &SharedWakeSet, index: usize) {
 }
 
 pub(crate) struct WakerRef {
-    parent: *const Waker,
-    wake_set: *const Arc<SharedWakeSet>,
+    shared: *const Arc<Shared>,
     index: usize,
 }
 
 impl WakerRef {
     /// Construct a new WakerRef.
-    pub(crate) fn new(
-        parent: *const Waker,
-        wake_set: *const Arc<SharedWakeSet>,
-        index: usize,
-    ) -> Self {
-        Self {
-            parent,
-            wake_set,
-            index,
-        }
+    pub(crate) fn new(shared: *const Arc<Shared>, index: usize) -> Self {
+        Self { shared, index }
     }
 
     unsafe fn clone(this: *const ()) -> RawWaker {
         let this = &(*(this as *const Self));
-        let parent = (*this.parent).clone();
-        let wake_set = (*this.wake_set).clone();
+        let shared = (*this.shared).clone();
         let index = this.index;
-        let waker = Box::into_raw(Box::new(WakerOwned::new(parent, wake_set, index)));
+        let waker = Box::into_raw(Box::new(WakerOwned::new(shared, index)));
         RawWaker::new(waker as *const (), WAKER_OWNED_VTABLE)
     }
 
@@ -77,8 +71,8 @@ impl WakerRef {
 
     unsafe fn wake_by_ref(this: *const ()) {
         let this = &(*(this as *const Self));
-        wake(&**this.wake_set, this.index);
-        (*this.parent).wake_by_ref();
+        wake(&(*this.shared).wake_set, this.index);
+        (*this.shared).waker.wake_by_ref();
     }
 
     unsafe fn drop(_: *const ()) {
@@ -94,40 +88,34 @@ pub(crate) static WAKER_REF_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
 );
 
 pub(crate) struct WakerOwned {
-    parent: Waker,
-    wake_set: Arc<SharedWakeSet>,
+    shared: Arc<Shared>,
     index: usize,
 }
 
 impl WakerOwned {
     /// Construct a new WakerRef.
-    pub(crate) fn new(parent: Waker, wake_set: Arc<SharedWakeSet>, index: usize) -> Self {
-        Self {
-            parent,
-            wake_set,
-            index,
-        }
+    pub(crate) fn new(shared: Arc<Shared>, index: usize) -> Self {
+        Self { shared, index }
     }
 
     unsafe fn clone(this: *const ()) -> RawWaker {
         let this = &(*(this as *const Self));
-        let parent = this.parent.clone();
-        let wake_set = this.wake_set.clone();
+        let shared = this.shared.clone();
         let index = this.index;
-        let waker = Box::into_raw(Box::new(WakerOwned::new(parent, wake_set, index)));
+        let waker = Box::into_raw(Box::new(WakerOwned::new(shared, index)));
         RawWaker::new(waker as *const (), WAKER_OWNED_VTABLE)
     }
 
     unsafe fn wake(this: *const ()) {
         let this = Box::from_raw(this as *mut Self);
-        wake(&*this.wake_set, this.index);
-        this.parent.wake();
+        wake(&this.shared.wake_set, this.index);
+        this.shared.waker.wake_by_ref();
     }
 
     unsafe fn wake_by_ref(this: *const ()) {
         let this = &(*(this as *const Self));
-        wake(&*this.wake_set, this.index);
-        this.parent.wake_by_ref();
+        wake(&this.shared.wake_set, this.index);
+        this.shared.waker.wake_by_ref();
     }
 
     unsafe fn drop(this: *const ()) {
@@ -142,3 +130,67 @@ pub(crate) static WAKER_OWNED_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
     WakerOwned::wake_by_ref,
     WakerOwned::drop,
 );
+
+pub(crate) struct SharedWaker {
+    waker: AtomicPtr<Waker>,
+}
+
+impl SharedWaker {
+    /// Construct a new shared waker.
+    pub(crate) fn new() -> Self {
+        Self {
+            waker: AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+
+    /// Wake the shared waker by ref.
+    pub(crate) fn wake_by_ref(&self) {
+        let waker = self.waker.load(Ordering::Acquire);
+
+        if !waker.is_null() {
+            let waker = unsafe { &*waker };
+            waker.wake_by_ref();
+        }
+    }
+
+    /// Test if the current waker will wake another waker.
+    pub(crate) fn is_woken_by(&self, other: &Waker) -> bool {
+        let current = self.waker.load(Ordering::Acquire);
+
+        if current.is_null() {
+            return false;
+        }
+
+        // Safety: we are the only one managing the state of the current waker.
+        // If non-null, it is correctly initialized.
+        let current = unsafe { &*current };
+        other.will_wake(current)
+    }
+
+    /// Swap out the current waker, dropping the one that was previously in
+    /// place.
+    pub(crate) fn swap(&self, waker: Waker) {
+        let waker = Box::into_raw(Box::new(waker));
+        let old = self.waker.swap(waker, Ordering::AcqRel);
+
+        if !old.is_null() {
+            // Safety: we are the only one managing the state of the current waker.
+            // If non-null, it is correctly initialized.
+            drop(unsafe { Box::from_raw(old) });
+        }
+    }
+}
+
+impl Drop for SharedWaker {
+    fn drop(&mut self) {
+        // Note: no need to swap here since this is at the end of the
+        // SharedWaker.
+        let old = self.waker.load(Ordering::Acquire);
+
+        if !old.is_null() {
+            // Safety: we are the only one managing the state of the current waker.
+            // If non-null, it is correctly initialized.
+            drop(unsafe { Box::from_raw(old) });
+        }
+    }
+}

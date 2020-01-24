@@ -52,6 +52,7 @@
 
 use self::pin_slab::PinSlab;
 use self::wake_set::{SharedWakeSet, WakeSet};
+use self::waker::SharedWaker;
 use futures_core::Stream;
 use std::{
     collections::VecDeque,
@@ -67,6 +68,20 @@ mod pin_slab;
 mod wake_set;
 mod waker;
 
+struct Shared {
+    waker: SharedWaker,
+    wake_set: SharedWakeSet,
+}
+
+impl Shared {
+    fn new() -> Self {
+        Self {
+            waker: SharedWaker::new(),
+            wake_set: SharedWakeSet::new(),
+        }
+    }
+}
+
 /// A container for an unordered collection of [Future]s.
 pub struct Unordered<F>
 where
@@ -78,9 +93,10 @@ where
     // They need to be pinned on the heap, since the slab might grow to
     // accomodate more futures.
     slab: PinSlab<F>,
-    // The current wake target. Each time we poll, we swap back and forth
-    // between this and `wake_alternate`.
-    wake_current: Arc<SharedWakeSet>,
+    // Shared parent waker.
+    // Includes the current wake target. Each time we poll, we swap back and
+    // forth between this and `wake_alternate`.
+    shared: Arc<Shared>,
     // Alternate wake set, used for growing the existing set when futures are
     // added. This is then swapped out with the active set to receive polls.
     wake_alternate: *mut WakeSet,
@@ -105,7 +121,7 @@ where
         Self {
             pollable: Vec::with_capacity(16),
             slab: PinSlab::new(),
-            wake_current: Arc::new(SharedWakeSet::new()),
+            shared: Arc::new(Shared::new()),
             wake_alternate: Box::into_raw(Box::new(alternate)),
             results: VecDeque::new(),
         }
@@ -149,10 +165,14 @@ where
             ref mut pollable,
             ref mut results,
             ref mut slab,
-            ref wake_current,
+            ref shared,
             ref mut wake_alternate,
             ..
         } = *self.as_mut();
+
+        if !shared.waker.is_woken_by(cx.waker()) {
+            shared.waker.swap(cx.waker().clone());
+        }
 
         loop {
             if let Some(value) = results.pop_front() {
@@ -172,7 +192,7 @@ where
                 }
 
                 let next = mem::replace(wake_alternate, ptr::null_mut());
-                *wake_alternate = wake_current.swap(next);
+                *wake_alternate = shared.wake_set.swap(next);
 
                 // Make sure no one else is using the alternate wake.
                 //
@@ -205,7 +225,7 @@ where
                 // Construct a new lightweight waker only capable of waking by
                 // reference, with referential access to `wake_current` and parent.
                 // In order to store this waker, it must be cloned.
-                let result = ref_poll(cx, wake_current, index, move |cx| fut.poll(cx));
+                let result = ref_poll(shared, index, move |cx| fut.poll(cx));
 
                 if let Poll::Ready(result) = result {
                     results.push_back(result);
@@ -225,11 +245,11 @@ where
 }
 
 /// Wrap the current context in one that updates the local WakeSet when woken.
-fn ref_poll<F, R>(cx: &mut Context<'_>, wake_current: &Arc<SharedWakeSet>, index: usize, f: F) -> R
+fn ref_poll<F, R>(shared: &Arc<Shared>, index: usize, f: F) -> R
 where
     F: FnOnce(&mut Context<'_>) -> R,
 {
-    let waker = self::waker::WakerRef::new(cx.waker(), wake_current, index);
+    let waker = self::waker::WakerRef::new(shared, index);
     let waker = RawWaker::new(
         &waker as *const _ as *const (),
         self::waker::WAKER_REF_VTABLE,

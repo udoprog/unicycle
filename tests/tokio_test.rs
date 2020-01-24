@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 use tokio::{stream::StreamExt as _, time};
 
-#[tokio::test]
+#[tokio::test(threaded_scheduler)]
 async fn test_bitset() {
     use unicycle::Unordered;
 
