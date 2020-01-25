@@ -61,7 +61,7 @@ use std::{
     pin::Pin,
     ptr,
     sync::Arc,
-    task::{Context, Poll, RawWaker, Waker},
+    task::{Context, Poll},
 };
 
 mod pin_slab;
@@ -225,7 +225,7 @@ where
                 // Construct a new lightweight waker only capable of waking by
                 // reference, with referential access to `wake_current` and parent.
                 // In order to store this waker, it must be cloned.
-                let result = ref_poll(shared, index, move |cx| fut.poll(cx));
+                let result = self::waker::poll_with_ref(shared, index, move |cx| fut.poll(cx));
 
                 if let Poll::Ready(result) = result {
                     results.push_back(result);
@@ -242,19 +242,4 @@ where
 
         Poll::Pending
     }
-}
-
-/// Wrap the current context in one that updates the local WakeSet when woken.
-fn ref_poll<F, R>(shared: &Arc<Shared>, index: usize, f: F) -> R
-where
-    F: FnOnce(&mut Context<'_>) -> R,
-{
-    let waker = self::waker::WakerRef::new(shared, index);
-    let waker = RawWaker::new(
-        &waker as *const _ as *const (),
-        self::waker::WAKER_REF_VTABLE,
-    );
-    let waker = unsafe { Waker::from_raw(waker) };
-    let mut cx = Context::from_waker(&waker);
-    f(&mut cx)
 }

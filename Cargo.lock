@@ -699,6 +699,7 @@ checksum = "826e7639553986605ec5979c7dd957c7895e93eabed50ab2ffa7f6128a75097c"
 name = "unicycle"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "checkers",
  "futures",
  "futures-core",
