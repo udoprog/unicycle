@@ -64,6 +64,9 @@ use std::{
     task::{Context, Poll},
 };
 
+pub use self::bit_set::BitSet;
+
+mod bit_set;
 mod pin_slab;
 mod wake_set;
 mod waker;
