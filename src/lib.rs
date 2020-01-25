@@ -68,12 +68,16 @@ mod pin_slab;
 mod wake_set;
 mod waker;
 
+/// Data that is shared across all sub-tasks.
 struct Shared {
+    /// The currently registered parent waker.
     waker: SharedWaker,
+    /// The currently registered wake set.
     wake_set: SharedWakeSet,
 }
 
 impl Shared {
+    /// Construct new shared data.
     fn new() -> Self {
         Self {
             waker: SharedWaker::new(),
@@ -133,6 +137,9 @@ where
     }
 
     /// Add the given future to the [Unordered] stream.
+    ///
+    /// Newly added futures are guaranteed to be polled, but there is no
+    /// guarantee in which order this will happen.
     pub fn push(&mut self, future: F) {
         let index = self.slab.insert(future);
         self.pollable.push(index);
@@ -146,7 +153,7 @@ where
     fn drop(&mut self) {
         // Safety: we uniquely own `wake_alternate`, so we are responsible for
         // dropping it. This is asserted when we swap it out during a poll by
-        // calling WakeSet::wait_for_unique_access. We are also the _only_ one
+        // calling WakeSet::lock_write. We are also the _only_ one
         // swapping `wake_alternative`, so we know that can't happen here.
         unsafe {
             WakeSet::drop_raw(self.wake_alternate);
@@ -170,74 +177,81 @@ where
             ..
         } = *self.as_mut();
 
+        // Return pending result.
+        if let Some(value) = results.pop_front() {
+            cx.waker().wake_by_ref();
+            return Poll::Ready(Some(value));
+        }
+
+        if slab.is_empty() {
+            // Nothing to poll, nothing to add. End the stream since we don't have work to do.
+            return Poll::Ready(None);
+        }
+
+        // Note: We defer swapping the waker until we are here since we `wake_by_ref` when
+        // reading results, and if we don't have any child tasks (slab is empty) no one would
+        // benefit from an update anyways.
         if !shared.waker.is_woken_by(cx.waker()) {
             shared.waker.swap(cx.waker().clone());
         }
 
-        loop {
-            if let Some(value) = results.pop_front() {
-                cx.waker().wake_by_ref();
-                return Poll::Ready(Some(value));
+        let wake_last = {
+            // Unlock. At this position, if someone adds an element to the wake set they are
+            // also bound to call wake, which will cause us to wake up.
+            //
+            // There is a race going on between locking and unlocking, and it's beneficial
+            // for child tasks to observe the locked state of the wake set so they refetch
+            // the other set instead of having to wait until another wakeup.
+            unsafe {
+                (**wake_alternate).unlock_write();
             }
 
-            if slab.is_empty() {
-                // Nothing to poll, nothing to add. And the stream since we
-                // don't have more work to do.
-                return Poll::Ready(None);
+            let next = mem::replace(wake_alternate, ptr::null_mut());
+            *wake_alternate = shared.wake_set.swap(next);
+
+            // Make sure no one else is using the alternate wake.
+            //
+            // Safety: We are the only one swapping wake_alternate, so at
+            // this point we know that we have access to the most recent
+            // active set. We _must_ call lock_write before we
+            // can punt this into a mutable reference though, because at
+            // this point inner futures will still have access to references
+            // to it (under a lock!). We must wait for these to expire.
+            unsafe {
+                (**wake_alternate).lock_write();
+                &mut **wake_alternate
             }
+        };
 
-            let wake_last = {
-                unsafe {
-                    (**wake_alternate).unlock_write();
-                }
+        let indexes = iter::from_fn(|| pollable.pop()).chain(wake_last.drain());
 
-                let next = mem::replace(wake_alternate, ptr::null_mut());
-                *wake_alternate = shared.wake_set.swap(next);
-
-                // Make sure no one else is using the alternate wake.
-                //
-                // Safety: We are the only one swapping wake_alternate, so at
-                // this point we know that we have access to the most recent
-                // active set. We _must_ call wait_for_unique_access before we
-                // can punt this into a mutable reference though, because at
-                // this point inner futures will still have access to references
-                // to it (under a lock!). We must wait for these to expire.
-                unsafe {
-                    (**wake_alternate).lock_write();
-                    &mut **wake_alternate
-                }
+        for index in indexes {
+            // NB: Since we defer pollables a little, a future might
+            // have been polled and subsequently removed from the slab.
+            // So we don't treat this as an error here.
+            // If on the other hand it was removed _and_ re-added, we have
+            // a case of a spurious poll. Luckily, that doesn't bother a
+            // future much.
+            let fut = match slab.get_pin_mut(index) {
+                Some(fut) => fut,
+                None => continue,
             };
 
-            let indexes = iter::from_fn(|| pollable.pop()).chain(wake_last.drain());
+            // Construct a new lightweight waker only capable of waking by
+            // reference, with referential access to `shared`.
+            let result = self::waker::poll_with_ref(shared, index, move |cx| fut.poll(cx));
 
-            for index in indexes {
-                // NB: Since we defer pollables a little, a future might
-                // have been polled and subsequently removed from the slab.
-                // So we don't treat this as an error here.
-                // If on the other hand it was removed _and_ re-added, we have
-                // a case of a spurious poll. Luckily, that doesn't bother a
-                // future much.
-                let fut = match slab.get_pin_mut(index) {
-                    Some(fut) => fut,
-                    None => continue,
-                };
-
-                // Construct a new lightweight waker only capable of waking by
-                // reference, with referential access to `wake_current` and parent.
-                // In order to store this waker, it must be cloned.
-                let result = self::waker::poll_with_ref(shared, index, move |cx| fut.poll(cx));
-
-                if let Poll::Ready(result) = result {
-                    results.push_back(result);
-                    let removed = slab.remove(index);
-                    debug_assert!(removed);
-                }
+            if let Poll::Ready(result) = result {
+                results.push_back(result);
+                let removed = slab.remove(index);
+                debug_assert!(removed);
             }
+        }
 
-            // break if we don't have any additional work to do.
-            if results.is_empty() {
-                break;
-            }
+        // Return produced result.
+        if let Some(value) = results.pop_front() {
+            cx.waker().wake_by_ref();
+            return Poll::Ready(Some(value));
         }
 
         Poll::Pending
