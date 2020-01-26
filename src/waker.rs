@@ -102,6 +102,13 @@ impl SharedWaker {
         let existing = self.state.fetch_add(1, Ordering::AcqRel);
 
         if existing >= 0 {
+            if existing == std::isize::MAX {
+                // Sentinel value in case we observe a value that has wrapped
+                // around. This is such a abnormal state that there's not much
+                // we _can_ do. Abort the process.
+                std::process::abort();
+            }
+
             let waker = unsafe { &*self.waker.get() };
             waker.wake_by_ref();
         }
@@ -118,6 +125,11 @@ impl SharedWaker {
             // try again later
             self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
             return false;
+        } else if last == std::isize::MIN {
+            // Sentinel value in case we observe a value that has wrapped
+            // around. This is such a abnormal state that there's not much
+            // we _can_ do. Abort the process.
+            std::process::abort();
         }
 
         let shared_waker = unsafe { &mut *self.waker.get() };
