@@ -16,7 +16,7 @@ const FIRST_SLOT_MASK: usize =
 
 /// Pre-allocated storage for a uniform data type.
 #[derive(Clone)]
-pub(crate) struct PinSlab<T> {
+pub struct PinSlab<T> {
     // Slots of memory. Once one has been allocated it is never moved.
     // This allows us to store entries in there and fetch them as `Pin<&mut T>`.
     slots: Vec<ptr::NonNull<Entry<T>>>,
@@ -49,11 +49,34 @@ impl<T> PinSlab<T> {
         }
     }
 
+    /// Get the length of the slab.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::PinSlab;
+    ///
+    /// let mut slab = PinSlab::new();
+    /// assert_eq!(0, slab.len());
+    /// assert_eq!(0, slab.insert(42));
+    /// assert_eq!(1, slab.len());
+    /// ```
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Test if the pin slab is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::PinSlab;
+    ///
+    /// let mut slab = PinSlab::new();
+    /// assert!(slab.is_empty());
+    /// assert_eq!(0, slab.insert(42));
+    /// assert!(!slab.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -169,6 +192,12 @@ impl<T> PinSlab<T> {
         }
 
         self.len += 1;
+    }
+}
+
+impl<T> Default for PinSlab<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -28,8 +28,7 @@ where
     let waker = RawWaker::new(&internals as *const _ as *const (), INTERNALS_VTABLE);
     let waker = mem::ManuallyDrop::new(unsafe { Waker::from_raw(waker) });
     let mut cx = Context::from_waker(&*waker);
-    let result = f(&mut cx);
-    result
+    f(&mut cx)
 }
 
 fn try_wake(wake_set: &SharedWakeSet, index: usize) -> bool {
@@ -47,7 +46,7 @@ fn try_wake(wake_set: &SharedWakeSet, index: usize) -> bool {
     let wake_set = unsafe { &*wake_set };
 
     if let Some(_guard) = wake_set.try_read_lock() {
-        unsafe { wake_set.set(index) };
+        wake_set.set(index);
         true
     } else {
         false
@@ -82,6 +81,7 @@ impl Internals {
     unsafe fn clone(this: *const ()) -> RawWaker {
         let this = &(*(this as *const Self));
         let s1 = mem::ManuallyDrop::new(Arc::from_raw(this.shared));
+        #[allow(clippy::redundant_clone)]
         let s2 = s1.clone();
         let index = this.index;
         let waker = Box::into_raw(Box::new(Internals::new(&**s2 as *const Shared, index)));

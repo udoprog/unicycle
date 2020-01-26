@@ -23,6 +23,16 @@ struct LayerLayout {
 }
 
 /// A sparse, layered bit set.
+///
+/// `BitSet` and `AtomicBitSet`'s are guaranteed to have an identical memory
+/// layout, so while it would require `unsafe`, transmuting or coercing between
+/// the two is sound assuming the proper synchronization is respected.
+///
+/// A `BitSet` provides the following methods for converting to an
+/// [`AtomicBitSet`]: [`into_atomic`] and [`as_atomic`].
+///
+/// [`into_atomic`]: BitSet::into_atomic
+#[repr(C)]
 pub struct BitSet {
     /// Layers of bits.
     layers: Vec<Layer>,
@@ -49,10 +59,27 @@ impl BitSet {
         self.layers.iter().map(Layer::as_slice).collect()
     }
 
-    /// Coerce in-place into an atomic bit set.
+    /// Convert in-place into an [`AtomicBitSet`].
     ///
     /// Atomic bit sets uses structural sharing with the current set, so this
     /// is a constant time `O(1)` operation.
+    ///
+    /// [`AtomicBitSet`]: AtomicBitSet
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::new();
+    /// set.reserve(1024);
+    ///
+    /// let atomic = set.into_atomic();
+    /// atomic.set(42);
+    ///
+    /// let set = atomic.into_local();
+    /// assert!(set.test(42));
+    /// ```
     pub fn into_atomic(mut self) -> AtomicBitSet {
         AtomicBitSet {
             layers: unsafe { convert_vec(mem::replace(&mut self.layers, Vec::new())) },
@@ -60,12 +87,13 @@ impl BitSet {
         }
     }
 
-    /// Coerce an atomic bitset into a local one.
-    pub fn from_atomic(mut this: AtomicBitSet) -> Self {
-        Self {
-            layers: unsafe { convert_vec(mem::replace(&mut this.layers, Vec::new())) },
-            cap: mem::replace(&mut this.cap, 0),
-        }
+    /// Convert in-place into a reference to an [`AtomicBitSet`].
+    ///
+    /// [`AtomicBitSet`]: AtomicBitSet
+    pub fn as_atomic(&self) -> &AtomicBitSet {
+        // Safety: BitSet and AtomicBitSet are guaranteed to have identical
+        // memory layouts.
+        unsafe { &*(self as *const _ as *const AtomicBitSet) }
     }
 
     /// Set the given bit.
@@ -94,6 +122,7 @@ impl BitSet {
             return;
         }
 
+        let cap = round_capacity_up(cap);
         let mut new = bit_set_layout(cap).peekable();
 
         let mut old = self.layers.iter_mut();
@@ -115,10 +144,7 @@ impl BitSet {
         // Add new layers!
         if remaining > 0 {
             self.layers.reserve_exact(remaining);
-
-            while let Some(l) = new.next() {
-                self.layers.push(Layer::with_capacity(l.cap));
-            }
+            self.layers.extend(new.map(|l| Layer::with_capacity(l.cap)));
         }
 
         self.cap = cap;
@@ -126,7 +152,7 @@ impl BitSet {
 
     /// Create a draining iterator over the bitset.
     pub fn drain(&mut self) -> Drain<'_> {
-        let depth = self.layers.len() - 1;
+        let depth = self.layers.len().saturating_sub(1);
 
         Drain {
             layers: &mut self.layers,
@@ -135,6 +161,12 @@ impl BitSet {
             #[cfg(test)]
             op_count: 0,
         }
+    }
+}
+
+impl Default for BitSet {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -239,7 +271,19 @@ impl Iterator for Drain<'_> {
     }
 }
 
-#[allow(unused)]
+/// The same as `BitSet`, except it provides atomic methods.
+///
+/// `BitSet` and `AtomicBitSet`'s are guaranteed to have an identical memory
+/// layout, so while it would require `unsafe`, transmuting or coercing between
+/// the two is sound assuming the proper synchronization is respected.
+///
+/// We provide the following methods to accomplish this from an atomic bitset,
+/// to a local (non atomic) one: [`as_local_mut`] for borrowing mutably and
+/// [`into_local`].
+///
+/// [`as_local_mut`]: AtomicBitSet::as_local_mut
+/// [`into_local`]: AtomicBitSet::into_local
+#[repr(C)]
 pub struct AtomicBitSet {
     /// Layers of bits.
     layers: Vec<AtomicLayer>,
@@ -268,17 +312,60 @@ impl AtomicBitSet {
         }
     }
 
-    /// Treat as a local, mutable bitset.
+    /// Convert in-place into a a [`BitSet`].
+    ///
+    /// [`BitSet`]: BitSet
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::new();
+    /// set.reserve(1024);
+    ///
+    /// let atomic = set.into_atomic();
+    /// atomic.set(42);
+    ///
+    /// let set = atomic.into_local();
+    /// assert!(set.test(42));
+    /// ```
+    pub fn into_local(mut self) -> BitSet {
+        BitSet {
+            layers: unsafe { convert_vec(mem::replace(&mut self.layers, Vec::new())) },
+            cap: mem::replace(&mut self.cap, 0),
+        }
+    }
+
+    /// Convert in-place into a reference to a [`BitSet`].
+    ///
+    /// [`BitSet`]: BitSet
+    pub fn as_local(&self) -> &BitSet {
+        // Safety: BitSet and AtomicBitSet are guaranteed to have identical
+        // internal structures.
+        unsafe { &*(self as *const _ as *const BitSet) }
+    }
+
+    /// Convert in-place into a mutable reference to a [`BitSet`].
+    ///
+    /// [`BitSet`]: BitSet
     pub fn as_local_mut(&mut self) -> &mut BitSet {
         // Safety: BitSet and AtomicBitSet are guaranteed to have identical
         // internal structures.
-        unsafe { mem::transmute::<_, &mut BitSet>(self) }
+        unsafe { &mut *(self as *mut _ as *mut BitSet) }
+    }
+}
+
+impl Default for AtomicBitSet {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 /// A single layer of bits.
 ///
 /// Note: doesn't store capacity, so must be deallocated by a BitSet.
+#[repr(C)]
 struct Layer {
     /// Bits.
     bits: *mut usize,
@@ -401,6 +488,7 @@ impl Drop for Layer {
 ///
 /// Note: This has the same memory layout as [Layer], so that coercing between
 /// them is possible.
+#[repr(C)]
 struct AtomicLayer {
     bits: *mut AtomicUsize,
     cap: usize,
@@ -464,11 +552,32 @@ fn bit_set_layout(capacity: usize) -> impl Iterator<Item = LayerLayout> + Clone 
         cap = round_bits_up(cap) / BITS;
 
         if cap > 0 {
-            Some(LayerLayout { cap: cap })
+            Some(LayerLayout { cap })
         } else {
             None
         }
     })
+}
+
+/// Round up the capacity to be the closest power of 2.
+fn round_capacity_up(cap: usize) -> usize {
+    if cap == 0 {
+        return 0;
+    }
+
+    let cap = if BITS as u32 - cap.leading_zeros() == cap.trailing_zeros() + 1 {
+        cap
+    } else {
+        let leading = cap.leading_zeros();
+
+        if leading == 64 {
+            return std::usize::MAX;
+        }
+
+        1 << (64 - cap.leading_zeros() as usize)
+    };
+
+    usize::max(16, cap)
 }
 
 /// Convert a vector into a different type, assuming the constituent type has
@@ -564,18 +673,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_into_atomic() {
-        let mut set = BitSet::new();
-        set.reserve(1024);
-
-        let atomic = set.into_atomic();
-        atomic.set(42);
-
-        let set = BitSet::from_atomic(atomic);
-        assert!(set.test(42));
-    }
-
     macro_rules! drain_test {
         ($cap:expr, $sample:expr, $expected_op_count:expr) => {{
             let mut set = BitSet::new();
@@ -621,6 +718,19 @@ mod tests {
             10_000_000,
             vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900, 9_009_009],
             58
+        );
+    }
+
+    #[test]
+    fn test_round_capacity_up() {
+        use super::round_capacity_up;
+        assert_eq!(0, round_capacity_up(0));
+        assert_eq!(16, round_capacity_up(1));
+        assert_eq!(32, round_capacity_up(17));
+        assert_eq!(32, round_capacity_up(32));
+        assert_eq!(
+            (std::usize::MAX >> 1) + 1,
+            round_capacity_up(std::usize::MAX >> 1)
         );
     }
 }

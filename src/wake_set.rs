@@ -3,8 +3,9 @@ use lock_api::RawRwLock;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 /// A wake set which allows us to immutably set an index.
+#[repr(C)]
 pub(crate) struct WakeSet {
-    set: *mut AtomicBitSet,
+    set: AtomicBitSet,
     /// Read locks are held every time someone manipulates the underlying set,
     /// we then (briefly) acquire a write lock to get unique access, after we
     /// have swapped out the wake set pointer.
@@ -13,10 +14,17 @@ pub(crate) struct WakeSet {
     lock: parking_lot::RawRwLock,
 }
 
+/// The same wake set as above, but with a local bitset that can be mutated.
+#[repr(C)]
+pub(crate) struct LocalWakeSet {
+    pub set: BitSet,
+    _lock: parking_lot::RawRwLock,
+}
+
 impl WakeSet {
     pub(crate) fn new() -> Self {
         Self {
-            set: Box::into_raw(Box::new(AtomicBitSet::new())),
+            set: AtomicBitSet::new(),
             lock: parking_lot::RawRwLock::INIT,
         }
     }
@@ -60,8 +68,8 @@ impl WakeSet {
     ///
     /// Caller must guarantee that an atomic set has been swapped into this
     /// container by acquiring the read lock first.
-    pub(crate) unsafe fn set(&self, index: usize) {
-        (*self.set).set(index);
+    pub(crate) fn set(&self, index: usize) {
+        self.set.set(index);
     }
 
     /// Treat the bitset as a local, mutable BitSet.
@@ -70,10 +78,11 @@ impl WakeSet {
     ///
     /// Caller must ensure that they have unique access to the atomic bit set by
     /// only using this while we have acquire a write lock under `lock_write`.
-    pub(crate) fn as_local_mut(&mut self) -> &mut BitSet {
-        // Safety: Unique access is guaranteed by the signature of this function
-        // (`&mut self`). We then rely on the contract of `as_local_mut`.
-        unsafe { (*self.set).as_local_mut() }
+    pub(crate) fn as_local_mut(&mut self) -> &mut LocalWakeSet {
+        // Safety: `LocalWakeSet` has the same memory layout as `WakeSet`: It
+        // has the same memory layout as the other set, since `AtomicBitSet` is
+        // guaranteed to have the same layout as `BitSet`.
+        unsafe { &mut *(self as *mut _ as *mut LocalWakeSet) }
     }
 }
 
