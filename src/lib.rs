@@ -100,6 +100,8 @@ where
     // They need to be pinned on the heap, since the slab might grow to
     // accomodate more futures.
     slab: PinSlab<F>,
+    // The largest index inserted into the slab so far.
+    max_index: usize,
     // Shared parent waker.
     // Includes the current wake target. Each time we poll, we swap back and
     // forth between this and `wake_alternate`.
@@ -128,6 +130,7 @@ where
         Self {
             pollable: Vec::with_capacity(16),
             slab: PinSlab::new(),
+            max_index: 0,
             shared: Arc::new(Shared::new()),
             wake_alternate: Box::into_raw(Box::new(alternate)),
             results: VecDeque::new(),
@@ -145,6 +148,7 @@ where
     /// guarantee in which order this will happen.
     pub fn push(&mut self, future: F) {
         let index = self.slab.insert(future);
+        self.max_index = usize::max(self.max_index, index);
         self.pollable.push(index);
     }
 }
@@ -177,6 +181,7 @@ where
             ref mut slab,
             ref shared,
             ref mut wake_alternate,
+            max_index,
             ..
         } = *self.as_mut();
 
@@ -199,30 +204,36 @@ where
         }
 
         let wake_last = {
-            // Unlock. At this position, if someone adds an element to the wake set they are
-            // also bound to call wake, which will cause us to wake up.
-            //
-            // There is a race going on between locking and unlocking, and it's beneficial
-            // for child tasks to observe the locked state of the wake set so they refetch
-            // the other set instead of having to wait until another wakeup.
             unsafe {
+                {
+                    let set = (**wake_alternate).as_local_mut();
+
+                    if set.capacity() <= max_index {
+                        set.reserve(max_index + 1);
+                    }
+                }
+
+                // Unlock. At this position, if someone adds an element to the wake set they are
+                // also bound to call wake, which will cause us to wake up.
+                //
+                // There is a race going on between locking and unlocking, and it's beneficial
+                // for child tasks to observe the locked state of the wake set so they refetch
+                // the other set instead of having to wait until another wakeup.
                 (**wake_alternate).unlock_write();
-            }
 
-            let next = mem::replace(wake_alternate, ptr::null_mut());
-            *wake_alternate = shared.wake_set.swap(next);
+                let next = mem::replace(wake_alternate, ptr::null_mut());
+                *wake_alternate = shared.wake_set.swap(next);
 
-            // Make sure no one else is using the alternate wake.
-            //
-            // Safety: We are the only one swapping wake_alternate, so at
-            // this point we know that we have access to the most recent
-            // active set. We _must_ call lock_write before we
-            // can punt this into a mutable reference though, because at
-            // this point inner futures will still have access to references
-            // to it (under a lock!). We must wait for these to expire.
-            unsafe {
+                // Make sure no one else is using the alternate wake.
+                //
+                // Safety: We are the only one swapping wake_alternate, so at
+                // this point we know that we have access to the most recent
+                // active set. We _must_ call lock_write before we
+                // can punt this into a mutable reference though, because at
+                // this point inner futures will still have access to references
+                // to it (under a lock!). We must wait for these to expire.
                 (**wake_alternate).lock_write();
-                &mut **wake_alternate
+                (**wake_alternate).as_local_mut()
             }
         };
 

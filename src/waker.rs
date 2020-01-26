@@ -47,7 +47,7 @@ fn try_wake(wake_set: &SharedWakeSet, index: usize) -> bool {
     let wake_set = unsafe { &*wake_set };
 
     if let Some(_guard) = wake_set.try_read_lock() {
-        wake_set.set(index);
+        unsafe { wake_set.set(index) };
         true
     } else {
         false

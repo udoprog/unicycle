@@ -41,7 +41,7 @@ enum Entry<T> {
 
 impl<T> PinSlab<T> {
     /// Construct a new, empty [PinSlab] with the default slot size.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             slots: Vec::new(),
             next: 0,
@@ -49,20 +49,24 @@ impl<T> PinSlab<T> {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
     /// Test if the pin slab is empty.
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Insert a value into the pin slab.
-    pub(crate) fn insert(&mut self, val: T) -> usize {
+    pub fn insert(&mut self, val: T) -> usize {
         let key = self.next;
         self.insert_at(key, val);
         key
     }
 
     /// Access the given key as a pinned mutable value.
-    pub(crate) fn get_pin_mut(&mut self, key: usize) -> Option<Pin<&mut T>> {
+    pub fn get_pin_mut(&mut self, key: usize) -> Option<Pin<&mut T>> {
         let (slot, offset, len) = calculate_key(key);
         let slot = *self.slots.get_mut(slot)?;
 
@@ -88,7 +92,7 @@ impl<T> PinSlab<T> {
     ///
     /// We need to take care that we don't move it, hence we only perform
     /// operations over pointers below.
-    pub(crate) fn remove(&mut self, key: usize) -> bool {
+    pub fn remove(&mut self, key: usize) -> bool {
         let (slot, offset, len) = calculate_key(key);
 
         let slot = match self.slots.get_mut(slot) {

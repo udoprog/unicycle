@@ -39,6 +39,11 @@ impl BitSet {
         }
     }
 
+    /// Get the current capacity of the bitset.
+    pub fn capacity(&self) -> usize {
+        self.cap
+    }
+
     /// Return a view of the underlying, raw layers.
     pub fn layers(&self) -> Vec<&'_ [usize]> {
         self.layers.iter().map(Layer::as_slice).collect()
@@ -243,9 +248,17 @@ pub struct AtomicBitSet {
 }
 
 impl AtomicBitSet {
+    /// Construct a new, empty atomic bit set.
+    pub fn new() -> Self {
+        Self {
+            layers: Vec::new(),
+            cap: 0,
+        }
+    }
+
     /// Set the given bit.
     pub fn set(&self, mut position: usize) {
-        assert!(position < self.cap);
+        assert!(position < self.cap, "{} < {}", position, self.cap);
 
         for layer in &self.layers {
             let slot = position / BITS;
@@ -253,6 +266,13 @@ impl AtomicBitSet {
             layer.set(slot, offset);
             position >>= BITS_SHIFT;
         }
+    }
+
+    /// Treat as a local, mutable bitset.
+    pub fn as_local_mut(&mut self) -> &mut BitSet {
+        // Safety: BitSet and AtomicBitSet are guaranteed to have identical
+        // internal structures.
+        unsafe { mem::transmute::<_, &mut BitSet>(self) }
     }
 }
 

@@ -8,7 +8,7 @@ readme = "README.md"
 
 [dependencies]
 futures-core = "0.3.1"
-hibitset = "0.6.2"
+# hibitset = "0.6.2"
 parking_lot = "0.10.0"
 lock_api = "0.3.3"
 arc-swap = "0.4.4"
