@@ -59,8 +59,8 @@ should be polled the next time `Unordered` is.
 * ~~Build our own sparse atomic bitset. We know exactly how many futures will
   ever touch any given bitset that is swapped in. That allows us to
   pre-allocate - or grow to - exactly as much space as we need.~~
-* Either remove lock in `SharedWaker` (`ArcSwap::swap` might block), or switch
-  to a variant which can suspend the current task.
+* ~~Either remove lock in `SharedWaker` (`ArcSwap::swap` might block), or switch
+  to a variant which can suspend the current task.~~
 * Either remove lock in `SharedWakeSet`, or switch to a variant which can
   suspend the current task.
 * Reduce unsafe use. Some of it exists because we didn't want to change the API

@@ -216,8 +216,8 @@ where
         // Note: We defer swapping the waker until we are here since we `wake_by_ref` when
         // reading results, and if we don't have any child tasks (slab is empty) no one would
         // benefit from an update anyways.
-        if !shared.waker.is_woken_by(cx.waker()) {
-            shared.waker.swap(cx.waker().clone());
+        if !shared.waker.swap(cx.waker()) {
+            return Poll::Pending;
         }
 
         let wake_last = unsafe {

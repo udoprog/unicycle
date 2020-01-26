@@ -6,12 +6,14 @@
 //!   wake the task from another thread.
 
 use crate::Shared;
-use arc_swap::ArcSwap;
 use std::{
+    cell::UnsafeCell,
     mem, ptr,
-    sync::Arc,
-    task::Context,
-    task::{RawWaker, RawWakerVTable, Waker},
+    sync::{
+        atomic::{AtomicIsize, Ordering},
+        Arc,
+    },
+    task::{Context, RawWaker, RawWakerVTable, Waker},
 };
 
 /// Wrap the current context in one that updates the local WakeSet.
@@ -82,33 +84,51 @@ impl Internals {
 }
 
 pub(crate) struct SharedWaker {
-    waker: ArcSwap<Waker>,
+    state: AtomicIsize,
+    waker: UnsafeCell<Waker>,
 }
 
 impl SharedWaker {
     /// Construct a new shared waker.
     pub(crate) fn new() -> Self {
         Self {
-            waker: ArcSwap::from(Arc::new(noop_waker())),
+            state: AtomicIsize::new(0),
+            waker: UnsafeCell::new(noop_waker()),
         }
     }
 
     /// Wake the shared waker by ref.
     pub(crate) fn wake_by_ref(&self) {
-        self.waker.load().wake_by_ref();
-    }
+        let existing = self.state.fetch_add(1, Ordering::AcqRel);
 
-    /// Test if the current waker will wake another waker.
-    pub(crate) fn is_woken_by(&self, other: &Waker) -> bool {
-        self.waker.load().will_wake(other)
+        if existing >= 0 {
+            let waker = unsafe { &*self.waker.get() };
+            waker.wake_by_ref();
+        }
+
+        self.state.fetch_sub(1, Ordering::AcqRel);
     }
 
     /// Swap out the current waker, dropping the one that was previously in
     /// place.
-    pub(crate) fn swap(&self, waker: Waker) {
-        // Note: this will block for a short period of time while the waker is loaded.
-        // TODO: figure out if this can be avoided.
-        self.waker.swap(Arc::new(waker));
+    pub(crate) fn swap(&self, waker: &Waker) -> bool {
+        let last = self.state.fetch_sub(std::isize::MAX, Ordering::AcqRel);
+
+        if last != 0 {
+            // try again later
+            self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
+            return false;
+        }
+
+        let shared_waker = unsafe { &mut *self.waker.get() };
+
+        if !shared_waker.will_wake(waker) {
+            *shared_waker = waker.clone();
+        }
+
+        let old = self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
+        debug_assert!(old >= -std::isize::MAX && old < 0);
+        return true;
     }
 }
 

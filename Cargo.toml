@@ -18,7 +18,6 @@ categories = ["asynchronous", "algorithms"]
 futures-core = "0.3.1"
 parking_lot = "0.10.0"
 lock_api = "0.3.3"
-arc-swap = "0.4.4"
 
 [dev-dependencies]
 tokio = {version = "0.2.10", features = ["full"]}
