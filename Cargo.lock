@@ -575,6 +575,7 @@ dependencies = [
  "futures-core",
  "lock_api",
  "parking_lot",
+ "pin-utils",
  "rand",
  "tokio",
 ]

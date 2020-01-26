@@ -4,17 +4,39 @@
 and possibly bad assumptions which needs to be either vetted or removed before
 you should consider putting it in production.
 
-This provides an experimental variant of `FuturesUnordered` aimed to be
-_fairer_. Easier to maintain, and store the futures being polled in a way which
-provides better memory locality.
+Unicycle provides an implementation of `FuturesUnordered` aimed to be _fairer_.
+Easier to implement. And store the futures being polled in a way which provides
+for better memory locality.
+
+## Fairness
+
+The current implementation of `FuturesUnordered` maintains a queue of tasks
+interested in waking up. As a task is woken up, it's added to the head of this
+queue.
+
+This process is run in a loop during poll, which will dequeue the next task to
+poll. This can lead to a fair bit of unfairness, since tasks which agressively
+signal interest in waking up will receive priority in being polled. In
+particular - a task which calls `wake_by_ref` and returns a `Poll::Pending`
+will cause the `FuturesUnordered` to [spin indefinitely]. This issue was
+[reported by Jon Gjengset].
+
+The following is explained in greater detail in the next section. But we achieve
+fairness by limiting the number of polls any future can have to one per cycle.
+And we make this efficient by maintaining this set of futures to poll in bitsets
+tracking wakeup interest, which we atomically cycle between.
+
+[spin indefinitely]: https://github.com/udoprog/unicycle/blob/master/tests/spinning_futures_unordered.rs
+[reported by Jon Gjengset]: https://github.com/rust-lang/futures-rs/issues/2047
 
 ## Architecture
 
 The `Unordered` type stores all futures being polled in a `PinSlab` (See [slab]
-for details, all though note that `PinSlab` is different). This maintains a
-growable collection of fixed-size memory regions, allowing it to store immovable
-objects. The primary feature of a slab is that it automatically reclaims memory
-at low cost. Each future inserted into the slab is assigned an _index_.
+for details, but note that `PinSlab` provides a similar API but differently).
+This maintains a growable collection of fixed-size memory regions, allowing it
+to store immovable objects. The primary feature of a slab is that it
+automatically reclaims memory at low cost. Each future inserted into the slab is
+assigned an _index_.
 
 Next to the futures we maintain two bitsets, one _active_ and one
 _alternate_. When a future is woken up, the bit associated with its index is
