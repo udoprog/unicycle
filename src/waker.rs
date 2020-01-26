@@ -5,7 +5,7 @@
 //! * `Internals` - which takes full ownership of the plumbing necessary to
 //!   wake the task from another thread.
 
-use crate::{wake_set::SharedWakeSet, Shared};
+use crate::Shared;
 use arc_swap::ArcSwap;
 use std::{
     mem, ptr,
@@ -29,35 +29,6 @@ where
     let waker = mem::ManuallyDrop::new(unsafe { Waker::from_raw(waker) });
     let mut cx = Context::from_waker(&*waker);
     f(&mut cx)
-}
-
-fn try_wake(wake_set: &SharedWakeSet, index: usize) -> bool {
-    let wake_set = wake_set.load();
-    debug_assert!(!wake_set.is_null());
-
-    // Safety: We know wake_set references valid memory, because in order to
-    // have access to `SharedWakeSet`, we must also hold an `Arc` to it - either
-    // through a reference or by it being stored in `Internals`.
-    //
-    // There is however a short window in which the wake set has been swapped in
-    // `Unordered`, but at this point it is not possible for it to be
-    // invalidated. This can only happen if `Unordered` is dropped, and this
-    // does not happen while it's being polled.
-    let wake_set = unsafe { &*wake_set };
-
-    if let Some(_guard) = wake_set.try_read_lock() {
-        wake_set.set(index);
-        true
-    } else {
-        false
-    }
-}
-
-/// Register wakeup in the [WakeSet].
-fn wake(wake_set: &SharedWakeSet, index: usize) {
-    // We need to spin here, since the wake set might be swapped out while we
-    // are trying to update it.
-    while !try_wake(wake_set, index) {}
 }
 
 static INTERNALS_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
@@ -92,7 +63,7 @@ impl Internals {
         // Note: this will never be called when it's passed by ref.
         let this = Box::from_raw(this as *mut Self);
         let shared = &(*this.shared);
-        wake(&shared.wake_set, this.index);
+        shared.wake_set.wake(this.index);
         shared.waker.wake_by_ref();
         drop(Arc::from_raw(this.shared));
     }
@@ -100,7 +71,7 @@ impl Internals {
     unsafe fn wake_by_ref(this: *const ()) {
         let this = &(*(this as *const Self));
         let shared = &(*this.shared);
-        wake(&shared.wake_set, this.index);
+        shared.wake_set.wake(this.index);
         shared.waker.wake_by_ref();
     }
 

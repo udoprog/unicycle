@@ -127,7 +127,7 @@ where
     /// Construct a new, empty [Unordered].
     pub fn new() -> Self {
         let alternate = WakeSet::new();
-        alternate.lock_write();
+        alternate.lock_exclusive();
 
         Self {
             pollable: Vec::with_capacity(16),
@@ -169,9 +169,15 @@ where
     F: Future,
 {
     fn drop(&mut self) {
+        // We intend to drop both wake sets. Therefore we need exclusive access
+        // to both wakers. Unfortunately that means that at this point, any call
+        // to wakes will have to serialize behind the shared wake set while the
+        // alternate set is being dropped.
+        let _write = self.shared.wake_set.prevent_drop_write();
+
         // Safety: we uniquely own `wake_alternate`, so we are responsible for
         // dropping it. This is asserted when we swap it out during a poll by
-        // calling WakeSet::lock_write. We are also the _only_ one
+        // calling WakeSet::lock_exclusive. We are also the _only_ one
         // swapping `wake_alternative`, so we know that can't happen here.
         unsafe {
             WakeSet::drop_raw(self.wake_alternate);
@@ -229,7 +235,7 @@ where
             // There is a race going on between locking and unlocking, and it's beneficial
             // for child tasks to observe the locked state of the wake set so they refetch
             // the other set instead of having to wait until another wakeup.
-            (**wake_alternate).unlock_write();
+            (**wake_alternate).unlock_exclusive();
 
             let next = mem::replace(wake_alternate, ptr::null_mut());
             *wake_alternate = shared.wake_set.swap(next);
@@ -238,11 +244,11 @@ where
             //
             // Safety: We are the only one swapping wake_alternate, so at
             // this point we know that we have access to the most recent
-            // active set. We _must_ call lock_write before we
+            // active set. We _must_ call lock_exclusive before we
             // can punt this into a mutable reference though, because at
             // this point inner futures will still have access to references
             // to it (under a lock!). We must wait for these to expire.
-            (**wake_alternate).lock_write();
+            (**wake_alternate).lock_exclusive();
             // Safety: While this is live we must _not_ mess with
             // `wake_alternate` in any way.
             (**wake_alternate).as_local_mut()
