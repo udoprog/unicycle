@@ -8,6 +8,10 @@ use std::thread;
 const NUM: usize = 10_000;
 const EXPECTED: usize = 50005000;
 
+/// Note: I use this test to detect deadlocks in unicycle. It aggressively
+/// polls the `Unordered` collection, and wakeups are generated on a different
+/// thread.
+#[ignore]
 #[tokio::test]
 async fn oneshots_unicycle() {
     for i in 0..1000 {

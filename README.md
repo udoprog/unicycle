@@ -1,23 +1,27 @@
 # unicycle
 
+**Note:** This project is experimental. It involves a large amount of unsafe
+and possibly bad assumptions which needs to be either vetted or removed before
+you should consider putting it in production.
+
 This provides an experimental variant of `FuturesUnordered` aimed to be
 _fairer_. Easier to maintain, and store the futures being polled in a way which
 provides better memory locality.
 
 ## Architecture
 
-The `Unordered` type stores all futures being polled in a `PinSlab`. This [slab]
-maintains a growable collection of fixed-size memory regions, allowing it to
-store immovable objects. The primary feature of a slab is that it automatically
-reclaims memory at low cost. Each future inserted into the slab is asigned an
-_index_.
+The `Unordered` type stores all futures being polled in a `PinSlab` (See [slab]
+for details, all though note that `PinSlab` is different). This maintains a
+growable collection of fixed-size memory regions, allowing it to store immovable
+objects. The primary feature of a slab is that it automatically reclaims memory
+at low cost. Each future inserted into the slab is assigned an _index_.
 
 Next to the futures we maintain two bitsets, one _active_ and one
 _alternate_. When a future is woken up, the bit associated with its index is
-set in the _active_ set, and the waker associated with the poll to `Unordered`
+set in the active set, and the waker associated with the poll to `Unordered`
 is called.
 
-Once `Unordered` is polled, it atomically swaps the _active_ and _alternate_
+Once `Unordered` is polled, it atomically swaps the active and alternate
 bitsets, waits until it has exclusive access to the now _alternate_ bitset, and
 drains it from all the indexes which have been flagged to determine which
 futures to poll.
