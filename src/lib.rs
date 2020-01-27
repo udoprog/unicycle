@@ -12,6 +12,8 @@
 //!
 //! * `parking-lot` - To enable locking using the [parking_lot] crate (optional).
 //!
+//! [parking_lot]: https://crates.io/crates/parking_lot
+//!
 //! ## Fairness
 //!
 //! The current implementation of `FuturesUnordered` maintains a queue of tasks
