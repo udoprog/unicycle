@@ -367,7 +367,8 @@ impl BitSet {
         self.cap = cap;
     }
 
-    /// Create a draining iterator over the bitset.
+    /// Create a draining iterator over the bitset, yielding all elements in
+    /// order of their index.
     ///
     /// # Examples
     ///
@@ -393,6 +394,38 @@ impl BitSet {
 
         Drain {
             layers,
+            index: 0,
+            depth,
+            #[cfg(test)]
+            op_count: 0,
+        }
+    }
+
+    /// Create an iterator over the bitset, yielding all elements in order of
+    /// their index.
+    ///
+    /// Note that iterator allocates a vector with a size matching the number of
+    /// layers in the [BitSet].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(128);
+    /// set.set(127);
+    /// set.set(32);
+    /// set.set(3);
+    ///
+    /// assert_eq!(vec![3, 32, 127], set.iter().collect::<Vec<_>>());
+    /// assert!(!set.is_empty());
+    /// ```
+    pub fn iter(&self) -> Iter<'_> {
+        let depth = self.layers.len().saturating_sub(1);
+
+        Iter {
+            layers: self.layers.as_slice(),
+            masks: (0..self.layers.len()).map(|_| !0).collect(),
             index: 0,
             depth,
             #[cfg(test)]
@@ -503,6 +536,64 @@ impl Iterator for Drain<'_> {
             // The entire bitset is cleared. We are done.
             self.layers = &mut [];
             return Some(index);
+        }
+    }
+}
+
+pub struct Iter<'a> {
+    layers: &'a [Layer],
+    masks: Vec<usize>,
+    index: usize,
+    depth: usize,
+    #[cfg(test)]
+    pub(crate) op_count: usize,
+}
+
+impl Iterator for Iter<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.layers.is_empty() {
+            return None;
+        }
+
+        loop {
+            #[cfg(test)]
+            {
+                self.op_count += 1;
+            }
+
+            let mask = &mut self.masks[self.depth];
+            let offset = self.index / WIDTHS[self.depth];
+            let slot = self.layers[self.depth][offset] & *mask;
+
+            if slot == 0 {
+                *mask = !0;
+                self.depth += 1;
+
+                if self.depth == self.layers.len() {
+                    self.layers = &[];
+                    return None;
+                }
+            } else {
+                let tail = slot.trailing_zeros() as usize;
+
+                if tail == BITS - 1 {
+                    *mask = 0;
+                } else {
+                    *mask = !0 << (tail + 1);
+                }
+
+                // Advance one layer down, setting the index to the bit matching
+                // the offset we are interested in.
+                if self.depth > 0 {
+                    self.index = (offset * WIDTHS[self.depth]) + (tail << SHIFTS[self.depth]);
+                    self.depth -= 1;
+                    continue;
+                }
+
+                return Some(self.index + tail);
+            }
         }
     }
 }
@@ -1148,6 +1239,25 @@ mod tests {
         }};
     }
 
+    macro_rules! iter_test {
+        ($cap:expr, $sample:expr, $expected_op_count:expr) => {{
+            let mut set = BitSet::new();
+            set.reserve($cap);
+
+            let positions: Vec<usize> = $sample;
+
+            for p in positions.iter().copied() {
+                set.set(p);
+            }
+
+            let mut iter = set.iter();
+            assert_eq!(positions, (&mut iter).collect::<Vec<_>>());
+            let op_count = iter.op_count;
+
+            assert_eq!($expected_op_count, op_count);
+        }};
+    }
+
     #[test]
     fn test_drain() {
         drain_test!(0, vec![], 0);
@@ -1167,6 +1277,27 @@ mod tests {
             10_000_000,
             vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900, 9_009_009],
             58
+        );
+    }
+
+    #[test]
+    fn test_iter() {
+        iter_test!(0, vec![], 0);
+        iter_test!(1024, vec![], 1);
+        iter_test!(64, vec![0, 2], 3);
+        iter_test!(64, vec![0, 1], 3);
+        iter_test!(128, vec![64], 4);
+        iter_test!(128, vec![0, 32, 64], 8);
+        iter_test!(4096, vec![0, 32, 64, 3030, 4095], 14);
+        iter_test!(
+            1_000_000,
+            vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900],
+            52
+        );
+        iter_test!(
+            10_000_000,
+            vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900, 9_009_009],
+            59
         );
     }
 
