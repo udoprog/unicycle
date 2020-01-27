@@ -8,6 +8,10 @@ Unicycle provides an implementation of `FuturesUnordered` aimed to be _fairer_.
 Easier to implement. And store the futures being polled in a way which provides
 for better memory locality.
 
+## Features
+
+* `parking-lot` - To enable locking using the [parking_lot] crate (optional).
+
 ## Fairness
 
 The current implementation of `FuturesUnordered` maintains a queue of tasks

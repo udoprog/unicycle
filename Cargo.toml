@@ -14,8 +14,13 @@ A scheduler for driving a large number of futures.
 keywords = ["async", "futures", "future"]
 categories = ["asynchronous", "algorithms"]
 
+[features]
+parking-lot = ["lock_api", "parking_lot"]
+
 [dependencies]
 futures-core = "0.3.1"
+parking_lot = {version = "0.10.0", optional = true}
+lock_api = {version = "0.3.3", optional = true}
 
 [dev-dependencies]
 tokio = {version = "0.2.10", features = ["full"]}
