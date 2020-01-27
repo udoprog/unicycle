@@ -148,11 +148,8 @@ impl BitSet {
     /// assert!(set.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
-        if self.layers.is_empty() {
-            return true;
-        }
-
-        self.layers[0].as_slice().iter().all(|b| *b == 0)
+        // The top, summary layer is zero.
+        self.layers.last().map(|l| l[0] == 0).unwrap_or(true)
     }
 
     /// Get the current capacity of the bitset.
@@ -388,8 +385,14 @@ impl BitSet {
     pub fn drain(&mut self) -> Drain<'_> {
         let depth = self.layers.len().saturating_sub(1);
 
+        let layers = if self.is_empty() {
+            &mut []
+        } else {
+            self.layers.as_mut_slice()
+        };
+
         Drain {
-            layers: self.layers.as_mut_slice(),
+            layers,
             index: 0,
             depth,
             #[cfg(test)]
@@ -416,22 +419,21 @@ impl Iterator for Drain<'_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.depth < self.layers.len() {
+        if self.layers.is_empty() {
+            return None;
+        }
+
+        loop {
             #[cfg(test)]
             {
                 self.op_count += 1;
             }
 
             let offset = self.index / WIDTHS[self.depth];
-            let layer = &mut self.layers[self.depth];
+            let slot = &mut self.layers[self.depth][offset];
 
-            let slot = &mut layer[offset];
-
-            // We are at a layer which is zerod, move up one layer.
-            if *slot == 0 {
-                self.depth += 1;
-                continue;
-            }
+            // We should never hit a layer which is zeroed.
+            debug_assert!(*slot != 0);
 
             if self.depth > 0 {
                 // Advance into a deeper layer. We set the base index to
@@ -440,9 +442,8 @@ impl Iterator for Drain<'_> {
                 // We calculate the index based on the offset that we are
                 // currently at and the information we get at the current
                 // layer of bits.
-                let new_index = (offset * WIDTHS[self.depth])
+                self.index = (offset * WIDTHS[self.depth])
                     + ((slot.trailing_zeros() as usize) << SHIFTS[self.depth]);
-                self.index = new_index;
                 self.depth -= 1;
                 continue;
             }
@@ -456,6 +457,10 @@ impl Iterator for Drain<'_> {
             debug_assert!(trail < BITS);
 
             let index = self.index + trail;
+
+            // NB: assert that we are actually unsetting a bit.
+            debug_assert!(*slot & !(1 << trail) != *slot);
+
             // Clear the current slot.
             *slot &= !(1 << trail);
 
@@ -467,6 +472,11 @@ impl Iterator for Drain<'_> {
             // Clear upper layers until we find one that is not set again -
             // then use that as hour new depth.
             for (depth, layer) in (1..).zip(self.layers[1..].iter_mut()) {
+                #[cfg(test)]
+                {
+                    self.op_count += 1;
+                }
+
                 let offset = self.index / WIDTHS[depth];
                 let slot = &mut layer[offset];
 
@@ -488,18 +498,12 @@ impl Iterator for Drain<'_> {
                         + ((slot.trailing_zeros() as usize) << SHIFTS[depth]);
                     return Some(index);
                 }
-
-                #[cfg(test)]
-                {
-                    self.op_count += 1;
-                }
             }
 
-            self.depth = self.layers.len();
+            // The entire bitset is cleared. We are done.
+            self.layers = &mut [];
             return Some(index);
         }
-
-        None
     }
 }
 
@@ -957,6 +961,10 @@ mod vec_safety {
             unsafe { slice::from_raw_parts(self.data, self.len) }
         }
 
+        pub fn last(&self) -> Option<&T> {
+            self.as_slice().last()
+        }
+
         pub unsafe fn from_raw_parts(data: *mut T, len: usize, cap: usize) -> Self {
             Self {
                 data,
@@ -1142,21 +1150,23 @@ mod tests {
 
     #[test]
     fn test_drain() {
+        drain_test!(0, vec![], 0);
+        drain_test!(1024, vec![], 0);
         drain_test!(64, vec![0], 1);
         drain_test!(64, vec![0, 1], 2);
         drain_test!(64, vec![0, 1, 63], 3);
         drain_test!(128, vec![64], 3);
-        drain_test!(128, vec![0, 32, 64], 6);
-        drain_test!(4096, vec![0, 32, 64, 3030, 4095], 10);
+        drain_test!(128, vec![0, 32, 64], 7);
+        drain_test!(4096, vec![0, 32, 64, 3030, 4095], 13);
         drain_test!(
             1_000_000,
             vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900],
-            42
+            51
         );
         drain_test!(
             10_000_000,
             vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900, 9_009_009],
-            48
+            58
         );
     }
 
