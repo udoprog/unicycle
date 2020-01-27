@@ -1,7 +1,7 @@
 #![deny(missing_docs)]
 #![allow(clippy::needless_doctest_main)]
 //! A scheduler for driving a large number of futures.
-//! 
+//!
 //! Unicycle provides the [Unordered] type, which is a futures abstraction that
 //! runs a set of futures which may complete in any order.
 //! Similarly to [FuturesUnordered].

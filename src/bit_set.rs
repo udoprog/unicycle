@@ -17,6 +17,17 @@ use self::vec_safety::Layers;
 #[cfg(not(feature = "vec-safety"))]
 type Layers<T> = Vec<T>;
 
+/// A private marker trait that promises that the implementing type has an
+/// identical memory layout to a Layer].
+///
+/// The only purpose of this trait is to server to make convert_layer safer.
+///
+/// # Safety
+///
+/// Implementer must assert that the implementing type has an identical layout
+/// to a [Layer].
+unsafe trait IsLayer {}
+
 /// Bits in a single usize.
 const BITS: usize = mem::size_of::<usize>() * 8;
 const BITS_SHIFT: usize = BITS.trailing_zeros() as usize;
@@ -196,7 +207,7 @@ impl BitSet {
     /// ```
     pub fn into_atomic(mut self) -> AtomicBitSet {
         AtomicBitSet {
-            layers: unsafe { convert_vec(mem::replace(&mut self.layers, Layers::new())) },
+            layers: convert_layers(mem::replace(&mut self.layers, Layers::new())),
             cap: mem::replace(&mut self.cap, 0),
         }
     }
@@ -514,6 +525,16 @@ pub struct AtomicBitSet {
 
 impl AtomicBitSet {
     /// Construct a new, empty atomic bit set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::AtomicBitSet;
+    ///
+    /// let set = AtomicBitSet::new();
+    /// let set = set.into_local();
+    /// assert!(set.is_empty());
+    /// ```
     pub fn new() -> Self {
         Self {
             layers: Layers::new(),
@@ -521,7 +542,22 @@ impl AtomicBitSet {
         }
     }
 
-    /// Set the given bit.
+    /// Set the given bit atomically.
+    ///
+    /// We can do this to an [AtomicBitSet] since the required modifications
+    /// that needs to be performed against each layer are idempotent of the
+    /// order in which they are applied.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let set = BitSet::with_capacity(1024).into_atomic();
+    /// set.set(1000);
+    /// let set = set.into_local();
+    /// assert!(set.test(1000));
+    /// ```
     pub fn set(&self, mut position: usize) {
         assert!(
             position < self.cap,
@@ -539,6 +575,9 @@ impl AtomicBitSet {
     }
 
     /// Convert in-place into a a [`BitSet`].
+    ///
+    /// This is safe, since this function requires exclusive owned access to the
+    /// [AtomicBitSet], and we assert that their memory layouts are identical.
     ///
     /// [`BitSet`]: BitSet
     ///
@@ -558,23 +597,40 @@ impl AtomicBitSet {
     /// ```
     pub fn into_local(mut self) -> BitSet {
         BitSet {
-            layers: unsafe { convert_vec(mem::replace(&mut self.layers, Layers::new())) },
+            layers: convert_layers(mem::replace(&mut self.layers, Layers::new())),
             cap: mem::replace(&mut self.cap, 0),
         }
     }
 
-    /// Convert in-place into a reference to a [`BitSet`].
-    ///
-    /// [`BitSet`]: BitSet
-    pub fn as_local(&self) -> &BitSet {
-        // Safety: BitSet and AtomicBitSet are guaranteed to have identical
-        // internal structures.
-        unsafe { &*(self as *const _ as *const BitSet) }
-    }
-
     /// Convert in-place into a mutable reference to a [`BitSet`].
     ///
+    /// This is safe, since this function requires exclusive mutable access to
+    /// the [AtomicBitSet], and we assert that their memory layouts are
+    /// identical.
+    ///
     /// [`BitSet`]: BitSet
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(1024).into_atomic();
+    ///
+    /// set.set(21);
+    /// set.set(42);
+    ///
+    /// {
+    ///     let set = set.as_local_mut();
+    ///     // Clearing is only safe with BitSet's since we require exclusive
+    ///     // mutable access to the collection being cleared.
+    ///     set.clear(21);
+    /// }
+    ///
+    /// let set = set.into_local();
+    /// assert!(!set.test(21));
+    /// assert!(set.test(42));
+    /// ```
     pub fn as_local_mut(&mut self) -> &mut BitSet {
         // Safety: BitSet and AtomicBitSet are guaranteed to have identical
         // internal structures.
@@ -598,6 +654,7 @@ struct Layer {
     cap: usize,
 }
 
+unsafe impl IsLayer for Layer {}
 unsafe impl Send for Layer {}
 unsafe impl Sync for Layer {}
 
@@ -726,6 +783,7 @@ struct AtomicLayer {
     cap: usize,
 }
 
+unsafe impl IsLayer for AtomicLayer {}
 unsafe impl Send for AtomicLayer {}
 unsafe impl Sync for AtomicLayer {}
 
@@ -738,7 +796,11 @@ impl AtomicLayer {
     /// Set the given bit in this layer, where `element` indicates how many
     /// elements are affected per position.
     pub fn set(&self, slot: usize, offset: usize) {
-        self.slot(slot).fetch_or(1 << offset, Ordering::AcqRel);
+        // Ordering: We rely on external synchronization when testing the layers
+        // So total memory ordering does not matter as long as we apply all
+        // necessary operations to all layers - which is guaranteed by
+        // [AtomicBitSet::set].
+        self.slot(slot).fetch_or(1 << offset, Ordering::Relaxed);
     }
 
     #[inline(always)]
@@ -817,14 +879,19 @@ fn round_capacity_up(cap: usize) -> usize {
 
 /// Convert a vector into a different type, assuming the constituent type has
 /// an identical layout to the converted type.
-///
-/// # Safety
-///
-/// Caller must ensure that `T` and `U` are identical in their memory layouts.
-unsafe fn convert_vec<T, U>(vec: Layers<T>) -> Layers<U> {
+fn convert_layers<T, U>(vec: Layers<T>) -> Layers<U>
+where
+    T: IsLayer,
+    U: IsLayer,
+{
     debug_assert!(mem::size_of::<T>() == mem::size_of::<U>());
+    debug_assert!(mem::align_of::<T>() == mem::align_of::<U>());
+
     let mut vec = mem::ManuallyDrop::new(vec);
-    Layers::from_raw_parts(vec.as_mut_ptr() as *mut U, vec.len(), vec.capacity())
+
+    // Safety: we guarantee safety by requiring that `T` and `U` implements
+    // `IsLayer`.
+    unsafe { Layers::from_raw_parts(vec.as_mut_ptr() as *mut U, vec.len(), vec.capacity()) }
 }
 
 #[cfg(feature = "vec-safety")]
@@ -834,9 +901,13 @@ mod vec_safety {
     /// Storage for layers.
     ///
     /// We use this _instead_ of `Vec<T>` since we want layout guarantees.
+    ///
+    /// Note: this type is underdocumented since it is internal, and its only
+    /// goal is to provide an equivalent compatible API as Vec<T>, so look
+    /// there for documentation.
     #[repr(C)]
     pub struct Layers<T> {
-        data: *mut T,
+        data: *const T,
         len: usize,
         cap: usize,
         _marker: marker::PhantomData<T>,
@@ -846,11 +917,12 @@ mod vec_safety {
     unsafe impl<T> Sync for Layers<T> where T: Sync {}
 
     impl<T> Layers<T> {
+        /// Note: Can't be a constant function :(.
         pub fn new() -> Self {
-            let mut vec = mem::ManuallyDrop::new(Vec::<T>::new());
+            let vec = mem::ManuallyDrop::new(Vec::<T>::new());
 
             Self {
-                data: vec.as_mut_ptr(),
+                data: vec.as_ptr(),
                 len: vec.len(),
                 cap: vec.capacity(),
                 _marker: marker::PhantomData,
@@ -862,7 +934,7 @@ mod vec_safety {
         }
 
         pub fn as_mut_ptr(&mut self) -> *mut T {
-            self.data
+            self.data as *mut T
         }
 
         pub fn len(&self) -> usize {
@@ -878,7 +950,7 @@ mod vec_safety {
         }
 
         pub fn as_mut_slice(&mut self) -> &mut [T] {
-            unsafe { slice::from_raw_parts_mut(self.data, self.len) }
+            unsafe { slice::from_raw_parts_mut(self.data as *mut T, self.len) }
         }
 
         pub fn as_slice(&self) -> &[T] {
@@ -900,7 +972,7 @@ mod vec_safety {
             F: FnOnce(&mut Vec<T>),
         {
             let mut vec = mem::ManuallyDrop::new(unsafe {
-                Vec::from_raw_parts(self.data, self.len, self.cap)
+                Vec::from_raw_parts(self.data as *mut T, self.len, self.cap)
             });
             f(&mut vec);
             self.data = vec.as_mut_ptr();
@@ -952,7 +1024,7 @@ mod vec_safety {
 
     impl<T> Drop for Layers<T> {
         fn drop(&mut self) {
-            drop(unsafe { Vec::from_raw_parts(self.data, self.len, self.cap) });
+            drop(unsafe { Vec::from_raw_parts(self.data as *mut T, self.len, self.cap) });
         }
     }
 }
@@ -1062,13 +1134,7 @@ mod tests {
             let op_count = drain.op_count;
 
             // Assert that all layers are zero.
-            assert_eq!(
-                0,
-                set.layers()
-                    .into_iter()
-                    .map(|l| l.iter().copied().sum::<usize>())
-                    .sum::<usize>()
-            );
+            assert!(set.layers().into_iter().all(|l| l.iter().all(|n| *n == 0)));
 
             assert_eq!($expected_op_count, op_count);
         }};
