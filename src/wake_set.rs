@@ -1,6 +1,6 @@
 use crate::{
     bit_set::{AtomicBitSet, BitSet},
-    lock::RwLock,
+    lock::{LockExclusiveGuard, LockSharedGuard, RwLock},
 };
 use std::sync::atomic::{AtomicPtr, Ordering};
 
@@ -56,12 +56,8 @@ impl WakeSet {
     }
 
     /// Lock interest in reading.
-    pub(crate) fn try_lock_shared(&self) -> Option<SharedLockGuard<'_>> {
-        if !self.lock.try_lock_shared() {
-            return None;
-        }
-
-        Some(SharedLockGuard { lock: &self.lock })
+    pub(crate) fn try_lock_shared(&self) -> Option<LockSharedGuard<'_>> {
+        self.lock.try_lock_shared_guard()
     }
 
     /// Drop a wake set through a pointer.
@@ -88,16 +84,6 @@ impl WakeSet {
         // has the same memory layout as the other set, since `AtomicBitSet` is
         // guaranteed to have the same layout as `BitSet`.
         unsafe { &mut *(self as *mut _ as *mut LocalWakeSet) }
-    }
-}
-
-pub(crate) struct SharedLockGuard<'a> {
-    lock: &'a RwLock,
-}
-
-impl Drop for SharedLockGuard<'_> {
-    fn drop(&mut self) {
-        self.lock.unlock_shared()
     }
 }
 
@@ -135,24 +121,18 @@ impl SharedWakeSet {
     /// Prevent that the pointer is being written to while this guard is being
     /// held. This makes sure there are no readers in the critical section that
     /// might read an invalid wake set while it's being deallocated.
-    pub(crate) fn prevent_drop_write(&self) -> PreventDropWriteGuard<'_> {
-        while !self.prevent_drop_lock.try_lock_exclusive() {
-            std::sync::atomic::spin_loop_hint();
-        }
+    pub(crate) fn prevent_drop_write(&self) -> LockExclusiveGuard<'_> {
+        loop {
+            if let Some(guard) = self.prevent_drop_lock.try_lock_exclusive_guard() {
+                return guard;
+            }
 
-        PreventDropWriteGuard {
-            lock: &self.prevent_drop_lock,
+            std::sync::atomic::spin_loop_hint();
         }
     }
 
-    fn try_prevent_drop_read(&self) -> Option<PreventDropReadGuard<'_>> {
-        if !self.prevent_drop_lock.try_lock_shared() {
-            return None;
-        }
-
-        Some(PreventDropReadGuard {
-            lock: &self.prevent_drop_lock,
-        })
+    fn try_prevent_drop_read(&self) -> Option<LockSharedGuard<'_>> {
+        self.prevent_drop_lock.try_lock_shared_guard()
     }
 
     fn try_wake(&self, index: usize) -> bool {
@@ -190,26 +170,6 @@ impl SharedWakeSet {
 
         wake_set.set(index);
         true
-    }
-}
-
-struct PreventDropReadGuard<'a> {
-    lock: &'a RwLock,
-}
-
-impl Drop for PreventDropReadGuard<'_> {
-    fn drop(&mut self) {
-        self.lock.unlock_shared();
-    }
-}
-
-pub(crate) struct PreventDropWriteGuard<'a> {
-    lock: &'a RwLock,
-}
-
-impl Drop for PreventDropWriteGuard<'_> {
-    fn drop(&mut self) {
-        self.lock.unlock_exclusive();
     }
 }
 

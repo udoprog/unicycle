@@ -40,6 +40,14 @@ impl RwLock {
         true
     }
 
+    pub fn try_lock_exclusive_guard(&self) -> Option<LockExclusiveGuard<'_>> {
+        if self.try_lock_exclusive() {
+            Some(LockExclusiveGuard { lock: self })
+        } else {
+            None
+        }
+    }
+
     /// Unlock shared access.
     pub fn unlock_exclusive(&self) {
         let old = self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
@@ -65,8 +73,39 @@ impl RwLock {
         true
     }
 
+    /// Try to acquire a shared lock with a guard.
+    pub fn try_lock_shared_guard(&self) -> Option<LockSharedGuard<'_>> {
+        if self.try_lock_shared() {
+            Some(LockSharedGuard { lock: self })
+        } else {
+            None
+        }
+    }
+
     /// Unlock shared access.
     pub fn unlock_shared(&self) {
         self.state.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// A lock guard for an exclusive lock.
+pub struct LockExclusiveGuard<'a> {
+    lock: &'a RwLock,
+}
+
+impl Drop for LockExclusiveGuard<'_> {
+    fn drop(&mut self) {
+        self.lock.unlock_exclusive()
+    }
+}
+
+/// A lock guard for a shared lock.
+pub struct LockSharedGuard<'a> {
+    lock: &'a RwLock,
+}
+
+impl Drop for LockSharedGuard<'_> {
+    fn drop(&mut self) {
+        self.lock.unlock_shared()
     }
 }

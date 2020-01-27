@@ -96,24 +96,24 @@ impl SharedWaker {
 
     /// Wake the shared waker by ref.
     pub(crate) fn wake_by_ref(&self) {
-        if self.lock.try_lock_shared() {
+        if let Some(guard) = self.lock.try_lock_shared_guard() {
             let waker = unsafe { &*self.waker.get() };
             waker.wake_by_ref();
-            self.lock.unlock_shared()
+            drop(guard);
         }
     }
 
     /// Swap out the current waker, dropping the one that was previously in
     /// place.
     pub(crate) fn swap(&self, waker: &Waker) -> bool {
-        if self.lock.try_lock_exclusive() {
+        if let Some(guard) = self.lock.try_lock_exclusive_guard() {
             let shared_waker = unsafe { &mut *self.waker.get() };
 
             if !shared_waker.will_wake(waker) {
                 *shared_waker = waker.clone();
             }
 
-            self.lock.unlock_exclusive();
+            drop(guard);
             true
         } else {
             waker.wake_by_ref();
