@@ -16,6 +16,39 @@ use std::{
 const BITS: usize = mem::size_of::<usize>() * 8;
 const BITS_SHIFT: usize = BITS.trailing_zeros() as usize;
 
+/// Precalculated shifts for each layer.
+///
+/// The shift is used to shift the bits in a given index to the least
+/// significant position so it can be used as an index for that layer.
+static SHIFTS: [usize; 11] = [
+    0,
+    1 * BITS_SHIFT,
+    2 * BITS_SHIFT,
+    3 * BITS_SHIFT,
+    4 * BITS_SHIFT,
+    5 * BITS_SHIFT,
+    6 * BITS_SHIFT,
+    7 * BITS_SHIFT,
+    8 * BITS_SHIFT,
+    9 * BITS_SHIFT,
+    10 * BITS_SHIFT,
+];
+
+/// Precalculated widths of each layer.
+static WIDTHS: [usize; 11] = [
+    BITS << SHIFTS[0],
+    BITS << SHIFTS[1],
+    BITS << SHIFTS[2],
+    BITS << SHIFTS[3],
+    BITS << SHIFTS[4],
+    BITS << SHIFTS[5],
+    BITS << SHIFTS[6],
+    BITS << SHIFTS[7],
+    BITS << SHIFTS[8],
+    BITS << SHIFTS[9],
+    BITS << SHIFTS[10],
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct LayerLayout {
     /// The length of the layer.
@@ -23,6 +56,10 @@ struct LayerLayout {
 }
 
 /// A sparse, layered bit set.
+///
+/// Layered bit sets support exceedingly efficient iteration, union, and
+/// intersection operations since they maintain summary layers summarizing the
+/// bits which are sets in layers below it.
 ///
 /// [BitSet] and [AtomicBitSet]'s are guaranteed to have an identical memory
 /// layout, so while it would require `unsafe`, transmuting or coercing between
@@ -369,8 +406,7 @@ impl Iterator for Drain<'_> {
                 self.op_count += 1;
             }
 
-            let shift = self.depth * BITS_SHIFT;
-            let offset = self.index / (BITS << shift);
+            let offset = self.index / WIDTHS[self.depth];
             let layer = &mut self.layers[self.depth];
 
             let slot = &mut layer[offset];
@@ -388,8 +424,8 @@ impl Iterator for Drain<'_> {
                 // We calculate the index based on the offset that we are
                 // currently at and the information we get at the current
                 // layer of bits.
-                let new_index =
-                    (offset * (BITS << shift)) + ((slot.trailing_zeros() as usize) << shift);
+                let new_index = (offset * WIDTHS[self.depth])
+                    + ((slot.trailing_zeros() as usize) << SHIFTS[self.depth]);
                 self.index = new_index;
                 self.depth -= 1;
                 continue;
@@ -415,33 +451,32 @@ impl Iterator for Drain<'_> {
             // Clear upper layers until we find one that is not set again -
             // then use that as hour new depth.
             for (depth, layer) in (1..).zip(self.layers[1..].iter_mut()) {
+                let offset = self.index / WIDTHS[depth];
+                let slot = &mut layer[offset];
+
+                // If this doesn't hold, then we have previously failed at
+                // populating the summary layers of the set.
+                debug_assert!(*slot != 0);
+
+                *slot &= !(1 << ((index >> SHIFTS[depth]) % BITS));
+
+                if *slot != 0 {
+                    // update the index to be the bottom of the next value set
+                    // layer.
+                    self.depth = depth;
+
+                    // We calculate the index based on the offset that we are
+                    // currently at and the information we get at the current
+                    // layer of bits.
+                    self.index = (offset * WIDTHS[depth])
+                        + ((slot.trailing_zeros() as usize) << SHIFTS[depth]);
+                    return Some(index);
+                }
+
                 #[cfg(test)]
                 {
                     self.op_count += 1;
                 }
-
-                let shift = depth * BITS_SHIFT;
-                let offset = self.index / (BITS << shift);
-                let mask = !(1 << ((index >> shift) % BITS));
-
-                let slot = &mut layer[offset];
-                *slot &= mask;
-
-                if *slot == 0 {
-                    continue;
-                }
-
-                // update the index to be the bottom of the next value set
-                // layer.
-                self.depth = depth;
-
-                // We calculate the index based on the offset that we are
-                // currently at and the information we get at the current
-                // layer of bits.
-                let new_index =
-                    (offset * (BITS << shift)) + ((slot.trailing_zeros() as usize) << shift);
-                self.index = new_index;
-                return Some(index);
             }
 
             self.depth = self.layers.len();
@@ -896,17 +931,17 @@ mod tests {
         drain_test!(64, vec![0, 1], 2);
         drain_test!(64, vec![0, 1, 63], 3);
         drain_test!(128, vec![64], 3);
-        drain_test!(128, vec![0, 32, 64], 7);
-        drain_test!(4096, vec![0, 32, 64, 3030, 4095], 13);
+        drain_test!(128, vec![0, 32, 64], 6);
+        drain_test!(4096, vec![0, 32, 64, 3030, 4095], 10);
         drain_test!(
             1_000_000,
             vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900],
-            51
+            42
         );
         drain_test!(
             10_000_000,
             vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900, 9_009_009],
-            58
+            48
         );
     }
 
