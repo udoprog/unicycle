@@ -882,7 +882,7 @@ mod vec_safety {
         }
 
         pub fn as_slice(&self) -> &[T] {
-            unsafe { slice::from_raw_parts(self.data, self.cap) }
+            unsafe { slice::from_raw_parts(self.data, self.len) }
         }
 
         pub unsafe fn from_raw_parts(data: *mut T, len: usize, cap: usize) -> Self {
