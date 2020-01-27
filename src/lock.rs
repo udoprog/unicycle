@@ -21,7 +21,7 @@ impl RwLock {
     }
 
     /// Try to lock exclusively.
-    pub fn try_lock_exclusive(&self) -> bool {
+    pub fn try_lock_exclusive_immediate(&self) -> bool {
         let last = self.state.fetch_sub(std::isize::MAX, Ordering::AcqRel);
 
         if last != 0 {
@@ -40,22 +40,22 @@ impl RwLock {
         true
     }
 
+    /// Unlock shared access.
+    pub fn unlock_exclusive_immediate(&self) {
+        let old = self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
+        debug_assert!(old >= -std::isize::MAX && old < 0);
+    }
+
     pub fn try_lock_exclusive_guard(&self) -> Option<LockExclusiveGuard<'_>> {
-        if self.try_lock_exclusive() {
+        if self.try_lock_exclusive_immediate() {
             Some(LockExclusiveGuard { lock: self })
         } else {
             None
         }
     }
 
-    /// Unlock shared access.
-    pub fn unlock_exclusive(&self) {
-        let old = self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
-        debug_assert!(old >= -std::isize::MAX && old < 0);
-    }
-
     /// Try to lock shared.
-    pub fn try_lock_shared(&self) -> bool {
+    pub fn try_lock_shared_immediate(&self) -> bool {
         let existing = self.state.fetch_add(1, Ordering::AcqRel);
 
         if existing < 0 {
@@ -74,8 +74,8 @@ impl RwLock {
     }
 
     /// Try to acquire a shared lock with a guard.
-    pub fn try_lock_shared_guard(&self) -> Option<LockSharedGuard<'_>> {
-        if self.try_lock_shared() {
+    pub fn try_lock_shared(&self) -> Option<LockSharedGuard<'_>> {
+        if self.try_lock_shared_immediate() {
             Some(LockSharedGuard { lock: self })
         } else {
             None
@@ -83,7 +83,7 @@ impl RwLock {
     }
 
     /// Unlock shared access.
-    pub fn unlock_shared(&self) {
+    pub fn unlock_shared_immediate(&self) {
         self.state.fetch_sub(1, Ordering::AcqRel);
     }
 }
@@ -95,7 +95,7 @@ pub struct LockExclusiveGuard<'a> {
 
 impl Drop for LockExclusiveGuard<'_> {
     fn drop(&mut self) {
-        self.lock.unlock_exclusive()
+        self.lock.unlock_exclusive_immediate()
     }
 }
 
@@ -106,6 +106,6 @@ pub struct LockSharedGuard<'a> {
 
 impl Drop for LockSharedGuard<'_> {
     fn drop(&mut self) {
-        self.lock.unlock_shared()
+        self.lock.unlock_shared_immediate()
     }
 }

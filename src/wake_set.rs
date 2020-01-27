@@ -48,16 +48,16 @@ impl WakeSet {
 
     /// Try to lock the current thread until we have unique access.
     pub(crate) fn try_lock_exclusive(&self) -> bool {
-        self.lock.try_lock_exclusive()
+        self.lock.try_lock_exclusive_immediate()
     }
 
     pub(crate) fn unlock_exclusive(&self) {
-        self.lock.unlock_exclusive();
+        self.lock.unlock_exclusive_immediate();
     }
 
     /// Lock interest in reading.
     pub(crate) fn try_lock_shared(&self) -> Option<LockSharedGuard<'_>> {
-        self.lock.try_lock_shared_guard()
+        self.lock.try_lock_shared()
     }
 
     /// Drop a wake set through a pointer.
@@ -132,7 +132,7 @@ impl SharedWakeSet {
     }
 
     fn try_prevent_drop_read(&self) -> Option<LockSharedGuard<'_>> {
-        self.prevent_drop_lock.try_lock_shared_guard()
+        self.prevent_drop_lock.try_lock_shared()
     }
 
     fn try_wake(&self, index: usize) -> bool {

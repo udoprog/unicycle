@@ -96,7 +96,7 @@ impl SharedWaker {
 
     /// Wake the shared waker by ref.
     pub(crate) fn wake_by_ref(&self) {
-        if let Some(guard) = self.lock.try_lock_shared_guard() {
+        if let Some(guard) = self.lock.try_lock_shared() {
             let waker = unsafe { &*self.waker.get() };
             waker.wake_by_ref();
             drop(guard);
