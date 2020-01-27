@@ -395,11 +395,6 @@ impl Layer {
     }
 
     /// Reserve exactly the specified number of elements in this layer.
-    ///
-    /// # Safety
-    ///
-    /// Caller needs to assert that `old` is the old capacity of the vector references by `bits`.
-    /// They also need to assert that new is strictly larger than old.
     pub fn grow(&mut self, new: usize) {
         debug_assert!(new > self.cap);
         let mut vec =

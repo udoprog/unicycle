@@ -60,15 +60,6 @@ impl WakeSet {
         self.lock.try_lock_shared()
     }
 
-    /// Drop a wake set through a pointer.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure that the dropped pointer is valid.
-    pub(crate) unsafe fn drop_raw(this: *mut Self) {
-        drop(Box::from_raw(this))
-    }
-
     /// Set the given index in the referenced bitset.
     pub(crate) fn set(&self, index: usize) {
         self.set.set(index);
@@ -104,11 +95,6 @@ impl SharedWakeSet {
     /// Swap the current pointer with another.
     pub(crate) fn swap(&self, other: *mut WakeSet) -> *mut WakeSet {
         self.wake_set.swap(other, Ordering::AcqRel)
-    }
-
-    /// Load the current wake set.
-    pub(crate) fn load(&self) -> *const WakeSet {
-        self.wake_set.load(Ordering::Acquire)
     }
 
     /// Register wakeup for the specified index.
@@ -150,7 +136,7 @@ impl SharedWakeSet {
             None => return false,
         };
 
-        let wake_set = self.load();
+        let wake_set = self.wake_set.load(Ordering::Acquire);
         debug_assert!(!wake_set.is_null());
 
         // Safety: We know wake_set references valid memory, because in order to
@@ -176,9 +162,14 @@ impl SharedWakeSet {
 impl Drop for SharedWakeSet {
     fn drop(&mut self) {
         let wake_set = self.wake_set.load(Ordering::Acquire);
-        assert!(!wake_set.is_null());
+        debug_assert!(!wake_set.is_null());
+
+        // Safety: At this point, there are no other ways to access the
+        // `SharedWakeSet`, so we are not racing against someone trying to call
+        // wake. Nor are we racing against `Unordered` dropping the wake set
+        // since this is the active set which has been swapped in exclusively.
         unsafe {
-            WakeSet::drop_raw(wake_set);
+            drop(Box::from_raw(wake_set));
         }
     }
 }

@@ -215,7 +215,7 @@ where
         // calling WakeSet::lock_exclusive. We are also the _only_ one
         // swapping `wake_alternative`, so we know that can't happen here.
         unsafe {
-            WakeSet::drop_raw(self.wake_alternate);
+            drop(Box::from_raw(self.wake_alternate));
         }
     }
 }
