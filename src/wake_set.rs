@@ -1,5 +1,7 @@
-use crate::bit_set::{AtomicBitSet, BitSet};
-use lock_api::RawRwLock;
+use crate::{
+    bit_set::{AtomicBitSet, BitSet},
+    lock::RwLock,
+};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 /// A wake set which allows us to immutably set an index.
@@ -15,21 +17,28 @@ pub(crate) struct WakeSet {
     /// appropriate. I.e. we don't want to keep track of a lock guard, but we
     /// still have a region of operation where we want to consider the wake set
     /// as exclusively owned.
-    lock: parking_lot::RawRwLock,
+    lock: RwLock,
 }
 
 /// The same wake set as above, but with a local bitset that can be mutated.
 #[repr(C)]
 pub(crate) struct LocalWakeSet {
     pub(crate) set: BitSet,
-    _lock: parking_lot::RawRwLock,
+    _lock: RwLock,
 }
 
 impl WakeSet {
     pub(crate) fn new() -> Self {
         Self {
             set: AtomicBitSet::new(),
-            lock: parking_lot::RawRwLock::INIT,
+            lock: RwLock::new(),
+        }
+    }
+
+    pub(crate) fn locked() -> Self {
+        Self {
+            set: AtomicBitSet::new(),
+            lock: RwLock::locked(),
         }
     }
 
@@ -37,15 +46,13 @@ impl WakeSet {
         Box::into_raw(Box::new(Self::new()))
     }
 
-    /// Blocks the current thread until we have unique access.
-    ///
-    /// This should be for a very short period of time.
-    pub(crate) fn lock_exclusive(&self) {
-        self.lock.lock_exclusive()
+    /// Try to lock the current thread until we have unique access.
+    pub(crate) fn try_lock_exclusive(&self) -> bool {
+        self.lock.try_lock_exclusive()
     }
 
     pub(crate) fn unlock_exclusive(&self) {
-        self.lock.unlock_exclusive()
+        self.lock.unlock_exclusive();
     }
 
     /// Lock interest in reading.
@@ -85,7 +92,7 @@ impl WakeSet {
 }
 
 pub(crate) struct SharedLockGuard<'a> {
-    lock: &'a parking_lot::RawRwLock,
+    lock: &'a RwLock,
 }
 
 impl Drop for SharedLockGuard<'_> {
@@ -96,7 +103,7 @@ impl Drop for SharedLockGuard<'_> {
 
 pub(crate) struct SharedWakeSet {
     wake_set: AtomicPtr<WakeSet>,
-    prevent_drop_lock: parking_lot::RawRwLock,
+    prevent_drop_lock: RwLock,
 }
 
 impl SharedWakeSet {
@@ -104,7 +111,7 @@ impl SharedWakeSet {
     pub(crate) fn new() -> Self {
         Self {
             wake_set: AtomicPtr::new(WakeSet::new_raw()),
-            prevent_drop_lock: parking_lot::RawRwLock::INIT,
+            prevent_drop_lock: RwLock::new(),
         }
     }
 
@@ -129,7 +136,9 @@ impl SharedWakeSet {
     /// held. This makes sure there are no readers in the critical section that
     /// might read an invalid wake set while it's being deallocated.
     pub(crate) fn prevent_drop_write(&self) -> PreventDropWriteGuard<'_> {
-        self.prevent_drop_lock.lock_exclusive();
+        while !self.prevent_drop_lock.try_lock_exclusive() {
+            std::sync::atomic::spin_loop_hint();
+        }
 
         PreventDropWriteGuard {
             lock: &self.prevent_drop_lock,
@@ -185,7 +194,7 @@ impl SharedWakeSet {
 }
 
 struct PreventDropReadGuard<'a> {
-    lock: &'a parking_lot::RawRwLock,
+    lock: &'a RwLock,
 }
 
 impl Drop for PreventDropReadGuard<'_> {
@@ -195,7 +204,7 @@ impl Drop for PreventDropReadGuard<'_> {
 }
 
 pub(crate) struct PreventDropWriteGuard<'a> {
-    lock: &'a parking_lot::RawRwLock,
+    lock: &'a RwLock,
 }
 
 impl Drop for PreventDropWriteGuard<'_> {

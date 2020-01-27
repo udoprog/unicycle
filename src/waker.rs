@@ -5,14 +5,11 @@
 //! * `Internals` - which takes full ownership of the plumbing necessary to
 //!   wake the task from another thread.
 
-use crate::Shared;
+use crate::{lock::RwLock, Shared};
 use std::{
     cell::UnsafeCell,
     mem, ptr,
-    sync::{
-        atomic::{AtomicIsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
     task::{Context, RawWaker, RawWakerVTable, Waker},
 };
 
@@ -84,7 +81,7 @@ impl Internals {
 }
 
 pub(crate) struct SharedWaker {
-    state: AtomicIsize,
+    lock: RwLock,
     waker: UnsafeCell<Waker>,
 }
 
@@ -92,55 +89,36 @@ impl SharedWaker {
     /// Construct a new shared waker.
     pub(crate) fn new() -> Self {
         Self {
-            state: AtomicIsize::new(0),
+            lock: RwLock::new(),
             waker: UnsafeCell::new(noop_waker()),
         }
     }
 
     /// Wake the shared waker by ref.
     pub(crate) fn wake_by_ref(&self) {
-        let existing = self.state.fetch_add(1, Ordering::AcqRel);
-
-        if existing >= 0 {
-            if existing == std::isize::MAX {
-                // Sentinel value in case we observe a value that has wrapped
-                // around. This is such a abnormal state that there's not much
-                // we _can_ do. Abort the process.
-                std::process::abort();
-            }
-
+        if self.lock.try_lock_shared() {
             let waker = unsafe { &*self.waker.get() };
             waker.wake_by_ref();
+            self.lock.unlock_shared()
         }
-
-        self.state.fetch_sub(1, Ordering::AcqRel);
     }
 
     /// Swap out the current waker, dropping the one that was previously in
     /// place.
     pub(crate) fn swap(&self, waker: &Waker) -> bool {
-        let last = self.state.fetch_sub(std::isize::MAX, Ordering::AcqRel);
+        if self.lock.try_lock_exclusive() {
+            let shared_waker = unsafe { &mut *self.waker.get() };
 
-        if last != 0 {
-            // try again later
-            self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
-            return false;
-        } else if last == std::isize::MIN {
-            // Sentinel value in case we observe a value that has wrapped
-            // around. This is such a abnormal state that there's not much
-            // we _can_ do. Abort the process.
-            std::process::abort();
+            if !shared_waker.will_wake(waker) {
+                *shared_waker = waker.clone();
+            }
+
+            self.lock.unlock_exclusive();
+            true
+        } else {
+            waker.wake_by_ref();
+            false
         }
-
-        let shared_waker = unsafe { &mut *self.waker.get() };
-
-        if !shared_waker.will_wake(waker) {
-            *shared_waker = waker.clone();
-        }
-
-        let old = self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
-        debug_assert!(old >= -std::isize::MAX && old < 0);
-        return true;
     }
 }
 

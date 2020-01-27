@@ -69,6 +69,7 @@ use std::{
 };
 
 mod bit_set;
+mod lock;
 mod pin_slab;
 mod wake_set;
 mod waker;
@@ -96,22 +97,26 @@ pub struct Unordered<F>
 where
     F: Future,
 {
-    // Indexes that needs to be polled after they have been added.
+    /// Indexes that needs to be polled after they have been added.
     pollable: Vec<usize>,
-    // Slab of futures being polled.
-    // They need to be pinned on the heap, since the slab might grow to
-    // accomodate more futures.
+    /// Slab of futures being polled.
+    /// They need to be pinned on the heap, since the slab might grow to
+    /// accomodate more futures.
     slab: PinSlab<F>,
-    // The largest index inserted into the slab so far.
+    /// The largest index inserted into the slab so far.
     max_capacity: usize,
-    // Shared parent waker.
-    // Includes the current wake target. Each time we poll, we swap back and
-    // forth between this and `wake_alternate`.
+    /// Shared parent waker.
+    /// Includes the current wake target. Each time we poll, we swap back and
+    /// forth between this and `wake_alternate`.
     shared: Arc<Shared>,
-    // Alternate wake set, used for growing the existing set when futures are
-    // added. This is then swapped out with the active set to receive polls.
+    /// Alternate wake set, used for growing the existing set when futures are
+    /// added. This is then swapped out with the active set to receive polls.
     wake_alternate: *mut WakeSet,
-    // Pending outgoing results. Uses a queue to avoid interrupting polling.
+    /// Flag intent to lock wake_alternative exclusively.
+    /// We set this flag instead of blocking on locking `wake_alternate` if
+    /// locking fails.
+    lock_wake_alternate: bool,
+    /// Pending outgoing results. Uses a queue to avoid interrupting polling.
     results: VecDeque<F::Output>,
 }
 
@@ -126,8 +131,7 @@ where
 {
     /// Construct a new, empty [Unordered].
     pub fn new() -> Self {
-        let alternate = WakeSet::new();
-        alternate.lock_exclusive();
+        let alternate = WakeSet::locked();
 
         Self {
             pollable: Vec::with_capacity(16),
@@ -135,6 +139,7 @@ where
             max_capacity: 0,
             shared: Arc::new(Shared::new()),
             wake_alternate: Box::into_raw(Box::new(alternate)),
+            lock_wake_alternate: false,
             results: VecDeque::new(),
         }
     }
@@ -198,6 +203,7 @@ where
             ref mut slab,
             ref shared,
             ref mut wake_alternate,
+            ref mut lock_wake_alternate,
             max_capacity,
             ..
         } = *self.as_mut();
@@ -221,24 +227,28 @@ where
         }
 
         let wake_last = unsafe {
-            {
-                let wake_set = (**wake_alternate).as_local_mut();
+            if !*lock_wake_alternate {
+                {
+                    let wake_set = (**wake_alternate).as_local_mut();
 
-                if wake_set.set.capacity() <= max_capacity {
-                    wake_set.set.reserve(max_capacity);
+                    if wake_set.set.capacity() <= max_capacity {
+                        wake_set.set.reserve(max_capacity);
+                    }
                 }
+
+                // Unlock. At this position, if someone adds an element to the wake set they are
+                // also bound to call wake, which will cause us to wake up.
+                //
+                // There is a race going on between locking and unlocking, and it's beneficial
+                // for child tasks to observe the locked state of the wake set so they refetch
+                // the other set instead of having to wait until another wakeup.
+                (**wake_alternate).unlock_exclusive();
+
+                let next = mem::replace(wake_alternate, ptr::null_mut());
+                *wake_alternate = shared.wake_set.swap(next);
+
+                *lock_wake_alternate = true;
             }
-
-            // Unlock. At this position, if someone adds an element to the wake set they are
-            // also bound to call wake, which will cause us to wake up.
-            //
-            // There is a race going on between locking and unlocking, and it's beneficial
-            // for child tasks to observe the locked state of the wake set so they refetch
-            // the other set instead of having to wait until another wakeup.
-            (**wake_alternate).unlock_exclusive();
-
-            let next = mem::replace(wake_alternate, ptr::null_mut());
-            *wake_alternate = shared.wake_set.swap(next);
 
             // Make sure no one else is using the alternate wake.
             //
@@ -248,7 +258,12 @@ where
             // can punt this into a mutable reference though, because at
             // this point inner futures will still have access to references
             // to it (under a lock!). We must wait for these to expire.
-            (**wake_alternate).lock_exclusive();
+            if !(**wake_alternate).try_lock_exclusive() {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+
+            *lock_wake_alternate = false;
             // Safety: While this is live we must _not_ mess with
             // `wake_alternate` in any way.
             (**wake_alternate).as_local_mut()
