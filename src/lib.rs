@@ -1,11 +1,10 @@
 #![deny(missing_docs)]
 #![allow(clippy::needless_doctest_main)]
-//! Unicycle aims to provide a futures abstraction that runs a set of futures which
-//! may complete in any order. Similarly to [`FuturesUnordered`]. But we aim to
-//! provide a stronger guarantee of fairness (see below), and better memory locality
-//! for the futures being pollled.
-//!
-//! [`FuturesUnordered`]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
+//! Unicycle provides the [Unordered] type, which is a futures abstraction that
+//! runs a set of futures which may complete in any order.
+//! Similarly to [FuturesUnordered].
+//! But we aim to provide a stronger guarantee of fairness (see below), and
+//! better memory locality for the futures being pollled.
 //!
 //! **Note:** This project is experimental. It involves some amount of unsafe and
 //! possibly bad assumptions which needs to be either vetted or removed before you
@@ -22,19 +21,19 @@
 //! ```rust
 //! use tokio::{stream::StreamExt as _, time};
 //! use std::time::Duration;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() {
 //!     let mut futures = unicycle::Unordered::new();
-//! 
+//!
 //!     futures.push(time::delay_for(Duration::from_secs(2)));
 //!     futures.push(time::delay_for(Duration::from_secs(3)));
 //!     futures.push(time::delay_for(Duration::from_secs(1)));
-//! 
+//!
 //!     while let Some(_) = futures.next().await {
 //!         println!("tick");
 //!     }
-//! 
+//!
 //!     println!("done!");
 //! }
 //! ```
@@ -47,16 +46,16 @@
 //! being driven - in the same degree as we talk about fairness in other forms of
 //! scheduling.
 //!
-//! The current implementation of `FuturesUnordered` maintains a queue of tasks
+//! The current implementation of [FuturesUnordered] maintains a queue of tasks
 //! interested in waking up. As a task is woken up, it's added to the head of this
-//! queue to signal it's interest. When `FuturesUnordered` is being polled, it
+//! queue to signal it's interest. When [FuturesUnordered] is being polled, it
 //! checks the head of this queue in a loop. As long as there is a task interested
 //! in being woken up, this task will be polled. This procuedure has the side effect
 //! of tasks which aggressively signal interest in waking up will receive priority,
 //! and be polled more frequently.
 //!
 //! This process can lead to an especially unfortunate cases where a small number of
-//! task can can cause the polling loop of `FuturesUnordered` to [spin abnormally].
+//! task can can cause the polling loop of [FuturesUnordered] to [spin abnormally].
 //! This issue was [reported by Jon Gjengset].
 //!
 //! Unicycle addresses this by limiting how frequently a child task may be polled
@@ -71,16 +70,16 @@
 //!
 //! ## Architecture
 //!
-//! The `Unordered` type stores all futures being polled in a `PinSlab` (Inspired by
+//! The [Unordered] type stores all futures being polled in a [PinSlab] (Inspired by
 //! the [slab] crate).
 //! A slab is capable of utomatically reclaiming storage at low cost, and will
 //! maintain decent memory locality.
-//! A `PinSlab` is different from a `Slab` in how it allocates the memory regions it
+//! A [PinSlab] is different from a [Slab] in how it allocates the memory regions it
 //! uses to store objects.
-//! While a regular `Slab` is simply backed by a vector which grows as appropriate,
+//! While a regular [Slab] is simply backed by a vector which grows as appropriate,
 //! this approach is not viable for pinning, since it would cause the objects to
 //! move while being reallocated.
-//! Instead `PinSlab` maintains a growable collection of fixed-size memory regions,
+//! Instead [PinSlab] maintains a growable collection of fixed-size memory regions,
 //! allowing it to store and reference immovable objects through the [pin API].
 //! Each future inserted into the slab is assigned an _index_, which we will be
 //! using below.
@@ -90,23 +89,26 @@
 //! [slab]: https://github.com/carllerche/slab
 //! [pin API]: https://doc.rust-lang.org/std/pin/index.html
 //!
-//! Next to the slab we maintain two bitsets, one _active_ and one _alternate_.
+//! Next to the slab we maintain two [BitSet]s, one _active_ and one _alternate_.
 //! When a task registers interest in waking up, the bit associated with its index
-//! is set in the active set, and the latest waker passed into `Unordered` is called
+//! is set in the active set, and the latest waker passed into [Unordered] is called
 //! to wake it up.
-//! Once `Unordered` is polled, it atomically swaps the active and alternate
-//! bitsets, waits until it has exclusive access to the now _alternate_ bitset, and
+//! Once [Unordered] is polled, it atomically swaps the active and alternate
+//! [BitSet]s, waits until it has exclusive access to the now _alternate_ [BitSet], and
 //! drains it from all the indexes which have been flagged to determine which tasks
 //! to poll.
 //! Each task is then polled _once_ in order.
-//! If the task is [`Ready`], its result is added to a result queue.
+//! If the task is [Ready], its result is added to a result queue.
+//!
+//! [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
 //!
 //! Unicycle now prioritizes draining the result queue above everything else. Once
 //! it is empty, we start the cycle over again.
+//!
+//! [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
+//! [FuturesUnordered]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
 
-#[doc(hidden)]
 pub use self::bit_set::{AtomicBitSet, BitSet};
-#[doc(hidden)]
 pub use self::pin_slab::PinSlab;
 use self::wake_set::{SharedWakeSet, WakeSet};
 use self::waker::SharedWaker;
@@ -146,6 +148,28 @@ impl Shared {
 }
 
 /// A container for an unordered collection of [Future]s.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use tokio::{stream::StreamExt as _, time};
+/// use std::time::Duration;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let mut futures = unicycle::Unordered::new();
+///
+///     futures.push(time::delay_for(Duration::from_secs(2)));
+///     futures.push(time::delay_for(Duration::from_secs(3)));
+///     futures.push(time::delay_for(Duration::from_secs(1)));
+///
+///     while let Some(_) = futures.next().await {
+///         println!("tick");
+///     }
+///
+///     println!("done!");
+/// }
+/// ```
 pub struct Unordered<F>
 where
     F: Future,
@@ -183,6 +207,17 @@ where
     F: Future,
 {
     /// Construct a new, empty [Unordered].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::Unordered;
+    ///
+    /// let mut futures = Unordered::new();
+    /// assert!(futures.is_empty());
+    ///
+    /// futures.push(async { 42 });
+    /// ```
     pub fn new() -> Self {
         let alternate = WakeSet::locked();
 
@@ -198,6 +233,15 @@ where
     }
 
     /// Test if the collection of futures is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::Unordered;
+    ///
+    /// let mut futures = Unordered::<tokio::time::Delay>::new();
+    /// assert!(futures.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.slab.is_empty()
     }
@@ -206,6 +250,19 @@ where
     ///
     /// Newly added futures are guaranteed to be polled, but there is no
     /// guarantee in which order this will happen.
+    ///
+    /// Pushed tasks are pinned by the [Unordered] collection automatically.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::Unordered;
+    ///
+    /// let mut futures = Unordered::new();
+    /// assert!(futures.is_empty());
+    /// futures.push(async { 42 });
+    /// assert!(!futures.is_empty());
+    /// ```
     pub fn push(&mut self, future: F) {
         let index = self.slab.insert(future);
         self.max_capacity = usize::max(self.max_capacity, index + 1);

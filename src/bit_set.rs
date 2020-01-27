@@ -24,47 +24,28 @@ struct LayerLayout {
 
 /// A sparse, layered bit set.
 ///
-/// `BitSet` and `AtomicBitSet`'s are guaranteed to have an identical memory
+/// [BitSet] and [AtomicBitSet]'s are guaranteed to have an identical memory
 /// layout, so while it would require `unsafe`, transmuting or coercing between
 /// the two is sound assuming the proper synchronization is respected.
 ///
-/// A `BitSet` provides the following methods for converting to an
-/// [`AtomicBitSet`]: [`into_atomic`] and [`as_atomic`].
+/// A [BitSet] provides the following methods for converting to an
+/// [AtomicBitSet]: [into_atomic] and [as_atomic].
 ///
-/// [`into_atomic`]: BitSet::into_atomic
+/// [into_atomic]: BitSet::into_atomic
+/// [as_atomic]: BitSet::as_atomic
 #[repr(C)]
 pub struct BitSet {
     /// Layers of bits.
+    // TODO: Consider breaking this up into a (pointer, len, cap) tuple since
+    // I'm not entirely sure this guarantees that the memory layout of `BitSet`
+    // is the same as `AtomicBitSet`, even though `Layer` and `AtomicLayer` is.
     layers: Vec<Layer>,
     /// The capacity of the bitset in number of bits it can store.
     cap: usize,
 }
 
 impl BitSet {
-    /// Construct a new, empty bit set.
-    pub fn new() -> Self {
-        Self {
-            layers: Vec::new(),
-            cap: 0,
-        }
-    }
-
-    /// Get the current capacity of the bitset.
-    pub fn capacity(&self) -> usize {
-        self.cap
-    }
-
-    /// Return a view of the underlying, raw layers.
-    pub fn layers(&self) -> Vec<&'_ [usize]> {
-        self.layers.iter().map(Layer::as_slice).collect()
-    }
-
-    /// Convert in-place into an [`AtomicBitSet`].
-    ///
-    /// Atomic bit sets uses structural sharing with the current set, so this
-    /// is a constant time `O(1)` operation.
-    ///
-    /// [`AtomicBitSet`]: AtomicBitSet
+    /// Construct a new, empty BitSet with an empty capacity.
     ///
     /// # Examples
     ///
@@ -72,7 +53,98 @@ impl BitSet {
     /// use unicycle::BitSet;
     ///
     /// let mut set = BitSet::new();
-    /// set.reserve(1024);
+    /// assert!(set.is_empty());
+    /// assert_eq!(0, set.capacity());
+    /// ```
+    pub const fn new() -> Self {
+        Self {
+            layers: Vec::new(),
+            cap: 0,
+        }
+    }
+
+    /// Construct a new, empty [BitSet] with the specified capacity.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(1024);
+    /// assert!(set.is_empty());
+    /// assert_eq!(1024, set.capacity());
+    /// ```
+    pub fn with_capacity(capacity: usize) -> Self {
+        let mut this = Self::new();
+        this.reserve(capacity);
+        this
+    }
+
+    /// Test if the bit set is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(64);
+    /// assert!(set.is_empty());
+    /// set.set(2);
+    /// assert!(!set.is_empty());
+    /// set.clear(2);
+    /// assert!(set.is_empty());
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        if self.layers.is_empty() {
+            return true;
+        }
+
+        self.layers[0].as_slice().iter().all(|b| *b == 0)
+    }
+
+    /// Get the current capacity of the bitset.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::new();
+    /// assert!(set.is_empty());
+    /// assert_eq!(0, set.capacity());
+    /// ```
+    pub fn capacity(&self) -> usize {
+        self.cap
+    }
+
+    /// Return a view of the underlying, raw layers.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(128);
+    /// set.set(1);
+    /// set.set(5);
+    /// // Note: two layers since we specified a capacity of 128.
+    /// assert_eq!(vec![&[0b100010, 0][..], &[1]], set.layers());
+    /// ```
+    pub fn layers(&self) -> Vec<&'_ [usize]> {
+        self.layers.iter().map(Layer::as_slice).collect()
+    }
+
+    /// Convert in-place into an [AtomicBitSet].
+    ///
+    /// Atomic bit sets uses structural sharing with the current set, so this
+    /// is a constant time `O(1)` operation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(1024);
     ///
     /// let atomic = set.into_atomic();
     /// atomic.set(42);
@@ -87,9 +159,18 @@ impl BitSet {
         }
     }
 
-    /// Convert in-place into a reference to an [`AtomicBitSet`].
+    /// Convert in-place into a reference to an [AtomicBitSet].
     ///
-    /// [`AtomicBitSet`]: AtomicBitSet
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let set = BitSet::with_capacity(1024);
+    ///
+    /// set.as_atomic().set(42);
+    /// assert!(set.test(42));
+    /// ```
     pub fn as_atomic(&self) -> &AtomicBitSet {
         // Safety: BitSet and AtomicBitSet are guaranteed to have identical
         // memory layouts.
@@ -97,8 +178,29 @@ impl BitSet {
     }
 
     /// Set the given bit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the position does not fit within the capacity of the [BitSet].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(64);
+    ///
+    /// assert!(set.is_empty());
+    /// set.set(2);
+    /// assert!(!set.is_empty());
+    /// ```
     pub fn set(&mut self, mut position: usize) {
-        assert!(position < self.cap);
+        assert!(
+            position < self.cap,
+            "position {} is out of bounds for capacity {}",
+            position,
+            self.cap
+        );
 
         for layer in &mut self.layers {
             let slot = position / BITS;
@@ -108,7 +210,59 @@ impl BitSet {
         }
     }
 
+    /// Clear the given bit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the position does not fit within the capacity of the [BitSet].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(64);
+    ///
+    /// set.clear(2);
+    /// assert!(set.is_empty());
+    /// set.set(2);
+    /// assert!(!set.is_empty());
+    /// set.clear(2);
+    /// assert!(set.is_empty());
+    /// set.clear(2);
+    /// assert!(set.is_empty());
+    /// ```
+    pub fn clear(&mut self, mut position: usize) {
+        assert!(
+            position < self.cap,
+            "position {} is out of bounds for capacity {}",
+            position,
+            self.cap
+        );
+
+        for layer in &mut self.layers {
+            let slot = position / BITS;
+            let offset = position % BITS;
+            layer.clear(slot, offset);
+            position >>= BITS_SHIFT;
+        }
+    }
+
     /// Test if the given position is set.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(64);
+    ///
+    /// assert!(set.is_empty());
+    /// set.set(2);
+    /// assert!(!set.is_empty());
+    /// assert!(set.test(2));
+    /// assert!(!set.test(3));
+    /// ```
     pub fn test(&self, position: usize) -> bool {
         assert!(position < self.cap);
         let slot = position / BITS;
@@ -117,6 +271,19 @@ impl BitSet {
     }
 
     /// Reserve enough space to store the given number of elements.
+    ///
+    /// This will not reserve space for exactly as many elements specified, but
+    /// will round up to the closest order of magnitude of 2.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    /// let mut set = BitSet::with_capacity(128);
+    /// assert_eq!(128, set.capacity());
+    /// set.reserve(250);
+    /// assert_eq!(256, set.capacity());
+    /// ```
     pub fn reserve(&mut self, cap: usize) {
         if self.cap >= cap {
             return;
@@ -151,6 +318,20 @@ impl BitSet {
     }
 
     /// Create a draining iterator over the bitset.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(128);
+    /// set.set(127);
+    /// set.set(32);
+    /// set.set(3);
+    ///
+    /// assert_eq!(vec![3, 32, 127], set.drain().collect::<Vec<_>>());
+    /// assert!(set.is_empty());
+    /// ```
     pub fn drain(&mut self) -> Drain<'_> {
         let depth = self.layers.len().saturating_sub(1);
 
@@ -271,18 +452,18 @@ impl Iterator for Drain<'_> {
     }
 }
 
-/// The same as `BitSet`, except it provides atomic methods.
+/// The same as [BitSet], except it provides atomic methods.
 ///
-/// `BitSet` and `AtomicBitSet`'s are guaranteed to have an identical memory
+/// [BitSet] and [AtomicBitSet]'s are guaranteed to have an identical memory
 /// layout, so while it would require `unsafe`, transmuting or coercing between
 /// the two is sound assuming the proper synchronization is respected.
 ///
 /// We provide the following methods to accomplish this from an atomic bitset,
-/// to a local (non atomic) one: [`as_local_mut`] for borrowing mutably and
-/// [`into_local`].
+/// to a local (non atomic) one: [as_local_mut] for borrowing mutably and
+/// [into_local].
 ///
-/// [`as_local_mut`]: AtomicBitSet::as_local_mut
-/// [`into_local`]: AtomicBitSet::into_local
+/// [as_local_mut]: AtomicBitSet::as_local_mut
+/// [into_local]: AtomicBitSet::into_local
 #[repr(C)]
 pub struct AtomicBitSet {
     /// Layers of bits.
@@ -302,7 +483,12 @@ impl AtomicBitSet {
 
     /// Set the given bit.
     pub fn set(&self, mut position: usize) {
-        assert!(position < self.cap, "{} < {}", position, self.cap);
+        assert!(
+            position < self.cap,
+            "position {} is out of bounds for layer capacity {}",
+            position,
+            self.cap
+        );
 
         for layer in &self.layers {
             let slot = position / BITS;
@@ -396,10 +582,14 @@ impl Layer {
 
     /// Reserve exactly the specified number of elements in this layer.
     pub fn grow(&mut self, new: usize) {
-        debug_assert!(new > self.cap);
+        // Nothing to do.
+        if self.cap >= new {
+            return;
+        }
+
         let mut vec =
             mem::ManuallyDrop::new(unsafe { Vec::from_raw_parts(self.bits, self.cap, self.cap) });
-        vec.reserve_exact(new - self.cap);
+        vec.reserve(new - self.cap);
 
         // Initialize new values.
         for _ in self.cap..new {
@@ -411,10 +601,14 @@ impl Layer {
         self.cap = vec.capacity();
     }
 
-    /// Set the given bit in this layer, where `element` indicates how many
-    /// elements are affected per position.
+    /// Set the given bit in this layer.
     pub fn set(&mut self, slot: usize, offset: usize) {
         *self.slot_mut(slot) |= 1 << offset;
+    }
+
+    /// Clear the given bit in this layer.
+    pub fn clear(&mut self, slot: usize, offset: usize) {
+        *self.slot_mut(slot) &= !(1 << offset);
     }
 
     /// Set the given bit in this layer, where `element` indicates how many

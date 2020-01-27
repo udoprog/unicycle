@@ -14,7 +14,8 @@ const FIRST_SLOT_SIZE: usize = 16;
 const FIRST_SLOT_MASK: usize =
     std::mem::size_of::<usize>() * 8 - FIRST_SLOT_SIZE.leading_zeros() as usize - 1;
 
-/// Pre-allocated storage for a uniform data type.
+/// Pre-allocated storage for a uniform data type, with slots of immovable
+/// memory regions.
 #[derive(Clone)]
 pub struct PinSlab<T> {
     // Slots of memory. Once one has been allocated it is never moved.
