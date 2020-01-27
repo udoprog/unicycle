@@ -4,6 +4,8 @@
 [![Crates](https://img.shields.io/crates/v/unicycle.svg)](https://crates.io/crates/unicycle)
 [![Actions Status](https://github.com/udoprog/unicycle/workflows/Rust/badge.svg)](https://github.com/udoprog/unicycle/actions)
 
+A scheduler for driving a large number of futures.
+
 Unicycle provides the [Unordered] type, which is a futures abstraction that
 runs a set of futures which may complete in any order.
 Similarly to [FuturesUnordered].

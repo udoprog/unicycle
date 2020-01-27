@@ -1,13 +1,13 @@
 [package]
 name = "unicycle"
-version = "0.1.8"
+version = "0.1.9"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2018"
 license = "MIT/Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/udoprog/checkers"
-homepage = "https://github.com/udoprog/checkers"
-documentation = "https://docs.rs/checkers"
+repository = "https://github.com/udoprog/unicycle"
+homepage = "https://github.com/udoprog/unicycle"
+documentation = "https://docs.rs/unicycle"
 description = """
 A scheduler for driving a large number of futures.
 """
