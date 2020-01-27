@@ -15,7 +15,9 @@ keywords = ["async", "futures", "future"]
 categories = ["asynchronous", "algorithms"]
 
 [features]
+default = ["vec-safety"]
 parking-lot = ["lock_api", "parking_lot"]
+vec-safety = []
 
 [dependencies]
 futures-core = "0.3.1"

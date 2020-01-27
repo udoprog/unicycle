@@ -12,6 +12,11 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+#[cfg(feature = "vec-safety")]
+use self::vec_safety::Layers;
+#[cfg(not(feature = "vec-safety"))]
+type Layers<T> = Vec<T>;
+
 /// Bits in a single usize.
 const BITS: usize = mem::size_of::<usize>() * 8;
 const BITS_SHIFT: usize = BITS.trailing_zeros() as usize;
@@ -76,7 +81,7 @@ pub struct BitSet {
     // TODO: Consider breaking this up into a (pointer, len, cap) tuple since
     // I'm not entirely sure this guarantees that the memory layout of `BitSet`
     // is the same as `AtomicBitSet`, even though `Layer` and `AtomicLayer` is.
-    layers: Vec<Layer>,
+    layers: Layers<Layer>,
     /// The capacity of the bitset in number of bits it can store.
     cap: usize,
 }
@@ -93,9 +98,9 @@ impl BitSet {
     /// assert!(set.is_empty());
     /// assert_eq!(0, set.capacity());
     /// ```
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            layers: Vec::new(),
+            layers: Layers::new(),
             cap: 0,
         }
     }
@@ -168,7 +173,7 @@ impl BitSet {
     /// assert_eq!(vec![&[0b100010, 0][..], &[1]], set.layers());
     /// ```
     pub fn layers(&self) -> Vec<&'_ [usize]> {
-        self.layers.iter().map(Layer::as_slice).collect()
+        self.layers.as_slice().iter().map(Layer::as_slice).collect()
     }
 
     /// Convert in-place into an [AtomicBitSet].
@@ -191,7 +196,7 @@ impl BitSet {
     /// ```
     pub fn into_atomic(mut self) -> AtomicBitSet {
         AtomicBitSet {
-            layers: unsafe { convert_vec(mem::replace(&mut self.layers, Vec::new())) },
+            layers: unsafe { convert_vec(mem::replace(&mut self.layers, Layers::new())) },
             cap: mem::replace(&mut self.cap, 0),
         }
     }
@@ -329,7 +334,7 @@ impl BitSet {
         let cap = round_capacity_up(cap);
         let mut new = bit_set_layout(cap).peekable();
 
-        let mut old = self.layers.iter_mut();
+        let mut old = self.layers.as_mut_slice().iter_mut();
 
         while let (Some(layer), Some(&LayerLayout { cap, .. })) = (old.next(), new.peek()) {
             debug_assert!(cap >= layer.cap);
@@ -373,7 +378,7 @@ impl BitSet {
         let depth = self.layers.len().saturating_sub(1);
 
         Drain {
-            layers: &mut self.layers,
+            layers: self.layers.as_mut_slice(),
             index: 0,
             depth,
             #[cfg(test)]
@@ -502,7 +507,7 @@ impl Iterator for Drain<'_> {
 #[repr(C)]
 pub struct AtomicBitSet {
     /// Layers of bits.
-    layers: Vec<AtomicLayer>,
+    layers: Layers<AtomicLayer>,
     /// The capacity of the bit set in number of bits it can store.
     cap: usize,
 }
@@ -511,7 +516,7 @@ impl AtomicBitSet {
     /// Construct a new, empty atomic bit set.
     pub fn new() -> Self {
         Self {
-            layers: Vec::new(),
+            layers: Layers::new(),
             cap: 0,
         }
     }
@@ -553,7 +558,7 @@ impl AtomicBitSet {
     /// ```
     pub fn into_local(mut self) -> BitSet {
         BitSet {
-            layers: unsafe { convert_vec(mem::replace(&mut self.layers, Vec::new())) },
+            layers: unsafe { convert_vec(mem::replace(&mut self.layers, Layers::new())) },
             cap: mem::replace(&mut self.cap, 0),
         }
     }
@@ -593,6 +598,9 @@ struct Layer {
     cap: usize,
 }
 
+unsafe impl Send for Layer {}
+unsafe impl Sync for Layer {}
+
 impl Layer {
     /// Allocate a new raw layer with the specified capacity.
     pub fn with_capacity(cap: usize) -> Layer {
@@ -611,7 +619,7 @@ impl Layer {
     }
 
     /// Return the given layer as a mutable slice.
-    pub fn as_slice_mut(&mut self) -> &mut [usize] {
+    pub fn as_mut_slice(&mut self) -> &mut [usize] {
         unsafe { slice::from_raw_parts_mut(self.bits, self.cap) }
     }
 
@@ -696,7 +704,7 @@ impl<I: slice::SliceIndex<[usize]>> ops::Index<I> for Layer {
 impl<I: slice::SliceIndex<[usize]>> ops::IndexMut<I> for Layer {
     #[inline]
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
-        ops::IndexMut::index_mut(self.as_slice_mut(), index)
+        ops::IndexMut::index_mut(self.as_mut_slice(), index)
     }
 }
 
@@ -717,6 +725,9 @@ struct AtomicLayer {
     bits: *mut AtomicUsize,
     cap: usize,
 }
+
+unsafe impl Send for AtomicLayer {}
+unsafe impl Sync for AtomicLayer {}
 
 impl AtomicLayer {
     /// Return the given layer as a slice.
@@ -810,15 +821,153 @@ fn round_capacity_up(cap: usize) -> usize {
 /// # Safety
 ///
 /// Caller must ensure that `T` and `U` are identical in their memory layouts.
-unsafe fn convert_vec<T, U>(vec: Vec<T>) -> Vec<U> {
+unsafe fn convert_vec<T, U>(vec: Layers<T>) -> Layers<U> {
     debug_assert!(mem::size_of::<T>() == mem::size_of::<U>());
     let mut vec = mem::ManuallyDrop::new(vec);
-    Vec::from_raw_parts(vec.as_mut_ptr() as *mut U, vec.len(), vec.capacity())
+    Layers::from_raw_parts(vec.as_mut_ptr() as *mut U, vec.len(), vec.capacity())
+}
+
+#[cfg(feature = "vec-safety")]
+mod vec_safety {
+    use std::{iter, marker, mem, ops, slice};
+
+    /// Storage for layers.
+    ///
+    /// We use this _instead_ of `Vec<T>` since we want layout guarantees.
+    #[repr(C)]
+    pub struct Layers<T> {
+        data: *mut T,
+        len: usize,
+        cap: usize,
+        _marker: marker::PhantomData<T>,
+    }
+
+    unsafe impl<T> Send for Layers<T> where T: Send {}
+    unsafe impl<T> Sync for Layers<T> where T: Sync {}
+
+    impl<T> Layers<T> {
+        pub fn new() -> Self {
+            let mut vec = mem::ManuallyDrop::new(Vec::<T>::new());
+
+            Self {
+                data: vec.as_mut_ptr(),
+                len: vec.len(),
+                cap: vec.capacity(),
+                _marker: marker::PhantomData,
+            }
+        }
+
+        pub fn reserve_exact(&mut self, cap: usize) {
+            self.as_vec(|vec| vec.reserve_exact(cap));
+        }
+
+        pub fn as_mut_ptr(&mut self) -> *mut T {
+            self.data
+        }
+
+        pub fn len(&self) -> usize {
+            self.len
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.len == 0
+        }
+
+        pub fn capacity(&self) -> usize {
+            self.cap
+        }
+
+        pub fn as_mut_slice(&mut self) -> &mut [T] {
+            unsafe { slice::from_raw_parts_mut(self.data, self.len) }
+        }
+
+        pub fn as_slice(&self) -> &[T] {
+            unsafe { slice::from_raw_parts(self.data, self.cap) }
+        }
+
+        pub unsafe fn from_raw_parts(data: *mut T, len: usize, cap: usize) -> Self {
+            Self {
+                data,
+                len,
+                cap,
+                _marker: marker::PhantomData,
+            }
+        }
+
+        #[inline(always)]
+        fn as_vec<F>(&mut self, f: F)
+        where
+            F: FnOnce(&mut Vec<T>),
+        {
+            let mut vec = mem::ManuallyDrop::new(unsafe {
+                Vec::from_raw_parts(self.data, self.len, self.cap)
+            });
+            f(&mut vec);
+            self.data = vec.as_mut_ptr();
+            self.len = vec.len();
+            self.cap = vec.capacity();
+        }
+    }
+
+    impl<'a, T> IntoIterator for &'a mut Layers<T> {
+        type IntoIter = slice::IterMut<'a, T>;
+        type Item = &'a mut T;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.as_mut_slice().into_iter()
+        }
+    }
+
+    impl<'a, T> IntoIterator for &'a Layers<T> {
+        type IntoIter = slice::Iter<'a, T>;
+        type Item = &'a T;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.as_slice().into_iter()
+        }
+    }
+
+    impl<T, I: slice::SliceIndex<[T]>> ops::Index<I> for Layers<T> {
+        type Output = I::Output;
+
+        #[inline]
+        fn index(&self, index: I) -> &Self::Output {
+            ops::Index::index(self.as_slice(), index)
+        }
+    }
+
+    impl<T, I: slice::SliceIndex<[T]>> ops::IndexMut<I> for Layers<T> {
+        #[inline]
+        fn index_mut(&mut self, index: I) -> &mut Self::Output {
+            ops::IndexMut::index_mut(self.as_mut_slice(), index)
+        }
+    }
+
+    impl<T> iter::Extend<T> for Layers<T> {
+        #[inline]
+        fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+            self.as_vec(|vec| vec.extend(iter));
+        }
+    }
+
+    impl<T> Drop for Layers<T> {
+        fn drop(&mut self) {
+            drop(unsafe { Vec::from_raw_parts(self.data, self.len, self.cap) });
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{bit_set_layout, BitSet};
+    use super::{bit_set_layout, AtomicBitSet, BitSet};
+
+    #[test]
+    fn assert_send_and_sync() {
+        assert_traits(BitSet::new());
+        assert_traits(AtomicBitSet::new());
+
+        fn assert_traits<T: Send + Sync>(_: T) {}
+    }
 
     #[test]
     fn test_set_and_test() {
