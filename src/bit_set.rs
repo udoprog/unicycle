@@ -88,6 +88,7 @@ struct LayerLayout {
 /// [into_atomic]: BitSet::into_atomic
 /// [as_atomic]: BitSet::as_atomic
 #[repr(C)]
+#[derive(Clone)]
 pub struct BitSet {
     /// Layers of bits.
     // TODO: Consider breaking this up into a (pointer, len, cap) tuple since
@@ -772,6 +773,17 @@ impl Layer {
     }
 }
 
+impl Clone for Layer {
+    fn clone(&self) -> Self {
+        let mut vec = mem::ManuallyDrop::new(self.as_slice().to_vec());
+
+        Self {
+            bits: vec.as_mut_ptr(),
+            cap: vec.capacity(),
+        }
+    }
+}
+
 impl<S> PartialEq<S> for Layer
 where
     S: AsRef<[usize]>,
@@ -1022,6 +1034,25 @@ mod vec_safety {
             self.data = vec.as_mut_ptr();
             self.len = vec.len();
             self.cap = vec.capacity();
+        }
+    }
+
+    impl<T> Clone for Layers<T>
+    where
+        T: Clone,
+    {
+        fn clone(&self) -> Self {
+            let vec = mem::ManuallyDrop::new(unsafe {
+                Vec::from_raw_parts(self.data as *mut T, self.len, self.cap)
+            })
+            .clone();
+
+            Self {
+                data: vec.as_ptr(),
+                len: vec.len(),
+                cap: vec.capacity(),
+                _marker: marker::PhantomData,
+            }
         }
     }
 
