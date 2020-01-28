@@ -114,13 +114,12 @@
 //! [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
 //! [FuturesUnordered]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
 
-pub use self::bit_set::{AtomicBitSet, BitSet};
+pub use self::bit_set::{AtomicBitSet, BitSet, Drain, DrainSnapshot, Iter};
 pub use self::pin_slab::PinSlab;
 use self::wake_set::{LocalWakeSet, SharedWakeSet, WakeSet};
 use self::waker::SharedWaker;
 use futures_core::Stream;
 use std::{
-    collections::VecDeque,
     future::Future,
     iter, mem,
     pin::Pin,
@@ -207,6 +206,7 @@ impl Shared {
             }
 
             *lock_wake_alternate = false;
+
             // Safety: While this is live we must _not_ mess with
             // `alternate` in any way.
             Poll::Ready((**alternate).as_local_mut())
@@ -237,10 +237,7 @@ impl Shared {
 ///     println!("done!");
 /// }
 /// ```
-pub struct Unordered<F>
-where
-    F: Future,
-{
+pub struct Unordered<F> {
     /// Indexes that needs to be polled after they have been added.
     pollable: Vec<usize>,
     /// Slab of futures being polled.
@@ -256,24 +253,21 @@ where
     /// Alternate wake set, used for growing the existing set when futures are
     /// added. This is then swapped out with the active set to receive polls.
     alternate: *mut WakeSet,
+    /// A stored drain location for the alternate set iterator.
+    alternate_drain: Option<DrainSnapshot>,
     /// Flag intent to lock wake_alternative exclusively.
     /// We set this flag instead of blocking on locking `alternate` if
     /// locking fails. Because if this is the case, we've already swapped the
     /// active wake set.
     lock_wake_alternate: bool,
-    /// Pending outgoing results. Uses a queue to avoid interrupting polling.
-    results: VecDeque<F::Output>,
 }
 
-unsafe impl<F> Send for Unordered<F> where F: Future {}
-unsafe impl<F> Sync for Unordered<F> where F: Future {}
+unsafe impl<F> Send for Unordered<F> {}
+unsafe impl<F> Sync for Unordered<F> {}
 
-impl<F> Unpin for Unordered<F> where F: Future {}
+impl<F> Unpin for Unordered<F> {}
 
-impl<F> Unordered<F>
-where
-    F: Future,
-{
+impl<F> Unordered<F> {
     /// Construct a new, empty [Unordered].
     ///
     /// # Examples
@@ -293,10 +287,10 @@ where
             pollable: Vec::with_capacity(16),
             slab: PinSlab::new(),
             max_capacity: 0,
+            alternate_drain: None,
             shared: Arc::new(Shared::new()),
             alternate: Box::into_raw(Box::new(alternate)),
             lock_wake_alternate: false,
-            results: VecDeque::new(),
         }
     }
 
@@ -338,19 +332,13 @@ where
     }
 }
 
-impl<F> Default for Unordered<F>
-where
-    F: Future,
-{
+impl<F> Default for Unordered<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F> Drop for Unordered<F>
-where
-    F: Future,
-{
+impl<F> Drop for Unordered<F> {
     fn drop(&mut self) {
         // We intend to drop both wake sets. Therefore we need exclusive access
         // to both wakers. Unfortunately that means that at this point, any call
@@ -377,20 +365,14 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let Self {
             ref mut pollable,
-            ref mut results,
             ref mut slab,
             ref shared,
             ref mut alternate,
             ref mut lock_wake_alternate,
             max_capacity,
+            ref mut alternate_drain,
             ..
         } = *self.as_mut();
-
-        // Return pending result.
-        if let Some(value) = results.pop_front() {
-            cx.waker().wake_by_ref();
-            return Poll::Ready(Some(value));
-        }
 
         if slab.is_empty() {
             // Nothing to poll, nothing to add. End the stream since we don't have work to do.
@@ -404,40 +386,56 @@ where
             return Poll::Pending;
         }
 
-        let wake_last =
-            ready!(shared.swap_active(cx, lock_wake_alternate, max_capacity, alternate));
-
-        let indexes = iter::from_fn(|| pollable.pop()).chain(wake_last.set.drain());
-
-        for index in indexes {
-            // NB: Since we defer pollables a little, a future might
-            // have been polled and subsequently removed from the slab.
-            // So we don't treat this as an error here.
-            // If on the other hand it was removed _and_ re-added, we have
-            // a case of a spurious poll. Luckily, that doesn't bother a
-            // future much.
-            let fut = match slab.get_pin_mut(index) {
-                Some(fut) => fut,
-                None => continue,
+        loop {
+            let (snapshot, wake_last, swapped) = if let Some(snapshot) = alternate_drain.take() {
+                (
+                    Some(snapshot),
+                    unsafe { (**alternate).as_local_mut() },
+                    false,
+                )
+            } else {
+                let wake_last =
+                    ready!(shared.swap_active(cx, lock_wake_alternate, max_capacity, alternate));
+                (None, wake_last, true)
             };
 
-            // Construct a new lightweight waker only capable of waking by
-            // reference, with referential access to `shared`.
-            let result = self::waker::poll_with_ref(shared, index, move |cx| fut.poll(cx));
+            let mut it = match snapshot {
+                Some(snapshot) => wake_last.set.drain_from(snapshot),
+                None => wake_last.set.drain(),
+            };
 
-            if let Poll::Ready(result) = result {
-                results.push_back(result);
-                let removed = slab.remove(index);
-                debug_assert!(removed);
+            let indexes = iter::from_fn(|| pollable.pop()).chain(&mut it);
+
+            for index in indexes {
+                // NB: Since we defer pollables a little, a future might
+                // have been polled and subsequently removed from the slab.
+                // So we don't treat this as an error here.
+                // If on the other hand it was removed _and_ re-added, we have
+                // a case of a spurious poll. Luckily, that doesn't bother a
+                // future much.
+                let fut = match slab.get_pin_mut(index) {
+                    Some(fut) => fut,
+                    None => continue,
+                };
+
+                // Construct a new lightweight waker only capable of waking by
+                // reference, with referential access to `shared`.
+                let result = self::waker::poll_with_ref(shared, index, move |cx| fut.poll(cx));
+
+                if let Poll::Ready(result) = result {
+                    let removed = slab.remove(index);
+                    debug_assert!(removed);
+                    cx.waker().wake_by_ref();
+                    *alternate_drain = it.snapshot();
+                    return Poll::Ready(Some(result));
+                }
             }
-        }
 
-        // Return produced result.
-        if let Some(value) = results.pop_front() {
-            cx.waker().wake_by_ref();
-            return Poll::Ready(Some(value));
-        }
+            if !swapped {
+                continue;
+            }
 
-        Poll::Pending
+            return Poll::Pending;
+        }
     }
 }

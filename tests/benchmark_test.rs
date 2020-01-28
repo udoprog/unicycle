@@ -13,7 +13,7 @@ const EXPECTED: usize = 50005000;
 /// thread.
 #[ignore]
 #[tokio::test]
-async fn oneshots_unicycle() {
+async fn benchmark_oneshots_unicycle() {
     for i in 0..1000 {
         use unicycle::Unordered;
 

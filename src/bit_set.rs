@@ -385,12 +385,65 @@ impl BitSet {
     /// assert_eq!(vec![3, 32, 127], set.drain().collect::<Vec<_>>());
     /// assert!(set.is_empty());
     /// ```
+    ///
+    /// Draining one bit at a time.
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(128);
+    ///
+    /// set.set(127);
+    /// set.set(32);
+    /// set.set(3);
+    ///
+    /// assert_eq!(Some(3), set.drain().next());
+    /// assert_eq!(Some(32), set.drain().next());
+    /// assert_eq!(Some(127), set.drain().next());
+    /// assert!(set.is_empty());
+    /// ```
+    ///
+    /// Saving the state of the draining iterator.
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(128);
+    ///
+    /// set.set(127);
+    /// set.set(32);
+    /// set.set(3);
+    ///
+    /// let mut it = set.drain();
+    ///
+    /// assert_eq!(Some(3), it.next());
+    /// assert_eq!(Some(32), it.next());
+    /// assert!(it.snapshot().is_some());
+    /// assert_eq!(Some(127), it.next());
+    /// assert!(it.snapshot().is_none());
+    /// assert_eq!(None, it.next());
+    /// assert!(it.snapshot().is_none());
+    /// ```
     pub fn drain(&mut self) -> Drain<'_> {
         let depth = self.layers.len().saturating_sub(1);
 
         Drain {
             layers: self.layers.as_mut_slice(),
             index: 0,
+            depth,
+            #[cfg(test)]
+            op_count: 0,
+        }
+    }
+
+    /// Start a drain operation using the given configuration parameters.
+    ///
+    /// These are usually acquired from [Drain::save], and can be used to resume
+    /// draining at a specific point.
+    pub fn drain_from(&mut self, DrainSnapshot(index, depth): DrainSnapshot) -> Drain<'_> {
+        Drain {
+            layers: self.layers.as_mut_slice(),
+            index,
             depth,
             #[cfg(test)]
             op_count: 0,
@@ -436,12 +489,34 @@ impl Default for BitSet {
     }
 }
 
+/// The snapshot of a drain in progress. This is created using
+/// [Drain::snapshot].
+///
+/// See [BitSet::drain_from] for examples.
+pub struct DrainSnapshot(usize, usize);
+
+/// A draining iterator of a [BitSet].
+///
+/// See [BitSet::iter] for examples.
 pub struct Drain<'a> {
     layers: &'a mut [Layer],
     index: usize,
     depth: usize,
     #[cfg(test)]
     pub(crate) op_count: usize,
+}
+
+impl Drain<'_> {
+    /// Save a snapshot of the of the draining iterator, unless it is done
+    /// already. This can then be used by [BitSet::drain_from] to efficiently
+    /// resume iteration from the given snapshot.
+    pub fn snapshot(&self) -> Option<DrainSnapshot> {
+        if self.layers.is_empty() {
+            None
+        } else {
+            Some(DrainSnapshot(self.index, self.depth))
+        }
+    }
 }
 
 impl Iterator for Drain<'_> {
@@ -462,30 +537,85 @@ impl Iterator for Drain<'_> {
             let slot = &mut self.layers[self.depth][offset];
 
             if *slot == 0 {
-                self.depth += 1;
-
-                if self.depth == self.layers.len() {
-                    self.layers = &mut [];
-                    return None;
-                }
-            } else {
-                let tail = slot.trailing_zeros() as usize;
-                *slot &= !(1 << tail);
-
-                // Advance one layer down, setting the index to the bit matching
-                // the offset we are interested in.
-                if self.depth > 0 {
-                    self.index = (offset * WIDTHS[self.depth]) + (tail << SHIFTS[self.depth]);
-                    self.depth -= 1;
-                    continue;
-                }
-
-                return Some(self.index + tail);
+                self.layers = &mut [];
+                return None;
             }
+
+            if self.depth > 0 {
+                // Advance into a deeper layer. We set the base index to
+                // the value of the deeper layer.
+                //
+                // We calculate the index based on the offset that we are
+                // currently at and the information we get at the current
+                // layer of bits.
+                self.index = (offset * WIDTHS[self.depth])
+                    + ((slot.trailing_zeros() as usize) << SHIFTS[self.depth]);
+                self.depth -= 1;
+                continue;
+            }
+
+            // We are now in layer 0. The number of trailing zeros indicates
+            // the bit set.
+            let trail = slot.trailing_zeros() as usize;
+
+            // NB: if this doesn't hold, a prior layer lied and we ended up
+            // here in vain.
+            debug_assert!(trail < BITS);
+
+            let index = self.index + trail;
+
+            // NB: assert that we are actually unsetting a bit.
+            debug_assert!(*slot & !(1 << trail) != *slot);
+
+            // Clear the current slot.
+            *slot &= !(1 << trail);
+
+            // Slot is not empty yet.
+            if *slot != 0 {
+                return Some(index);
+            }
+
+            // Clear upper layers until we find one that is not set again -
+            // then use that as hour new depth.
+            for (depth, layer) in (1..).zip(self.layers[1..].iter_mut()) {
+                #[cfg(test)]
+                {
+                    self.op_count += 1;
+                }
+
+                let offset = self.index / WIDTHS[depth];
+                let slot = &mut layer[offset];
+
+                // If this doesn't hold, then we have previously failed at
+                // populating the summary layers of the set.
+                debug_assert!(*slot != 0);
+
+                *slot &= !(1 << ((index >> SHIFTS[depth]) % BITS));
+
+                if *slot != 0 {
+                    // update the index to be the bottom of the next value set
+                    // layer.
+                    self.depth = depth;
+
+                    // We calculate the index based on the offset that we are
+                    // currently at and the information we get at the current
+                    // layer of bits.
+                    self.index = (offset * WIDTHS[depth])
+                        + ((slot.trailing_zeros() as usize) << SHIFTS[depth]);
+                    return Some(index);
+                }
+            }
+
+            // The entire bitset is cleared. We are done.
+            self.layers = &mut [];
+            return Some(index);
         }
     }
 }
 
+/// An iterator over a [BitSet].
+///
+/// See [BitSet::iter] for examples.
 pub struct Iter<'a> {
     layers: &'a [Layer],
     masks: [u8; MAX_LAYERS],
@@ -1238,22 +1368,22 @@ mod tests {
     fn test_drain() {
         drain_test!(0, vec![], 0);
         drain_test!(1024, vec![], 1);
-        drain_test!(64, vec![0], 2);
-        drain_test!(64, vec![0, 1], 3);
-        drain_test!(64, vec![0, 1, 63], 4);
-        drain_test!(128, vec![64], 4);
-        drain_test!(128, vec![0, 32, 64], 8);
-        drain_test!(4096, vec![0, 32, 64, 3030, 4095], 14);
+        drain_test!(64, vec![0], 1);
+        drain_test!(64, vec![0, 1], 2);
+        drain_test!(64, vec![0, 1, 63], 3);
+        drain_test!(128, vec![64], 3);
+        drain_test!(128, vec![0, 32, 64], 7);
+        drain_test!(4096, vec![0, 32, 64, 3030, 4095], 13);
         drain_test!(
             1_000_000,
             vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900],
-            52
+            51
         );
-        drain_test!(1_000_000, (0..1_000_000).collect::<Vec<usize>>(), 1_031_749);
+        drain_test!(1_000_000, (0..1_000_000).collect::<Vec<usize>>(), 1_031_748);
         drain_test!(
             10_000_000,
             vec![0, 32, 64, 3030, 4095, 50_000, 102110, 203020, 500000, 803020, 900900, 9_009_009],
-            59
+            58
         );
     }
 

@@ -16,7 +16,7 @@ const NUM: usize = 100_000;
 const EXPECTED: usize = 5000050000;
 
 #[bench]
-fn oneshots_unicycle(b: &mut Bencher) {
+fn unordered_oneshots_unicycle(b: &mut Bencher) {
     use unicycle::Unordered;
 
     b.iter(|| {
@@ -57,7 +57,7 @@ fn oneshots_unicycle(b: &mut Bencher) {
 }
 
 #[bench]
-fn oneshots_futures(b: &mut Bencher) {
+fn unordered_oneshots_futures(b: &mut Bencher) {
     b.iter(|| {
         let mut txs = VecDeque::with_capacity(NUM);
         let mut rxs = FuturesUnordered::new();
