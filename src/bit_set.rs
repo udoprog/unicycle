@@ -231,10 +231,6 @@ impl BitSet {
 
     /// Set the given bit.
     ///
-    /// # Panics
-    ///
-    /// Panics if the position does not fit within the capacity of the [BitSet].
-    ///
     /// # Examples
     ///
     /// ```rust
@@ -247,12 +243,9 @@ impl BitSet {
     /// assert!(!set.is_empty());
     /// ```
     pub fn set(&mut self, mut position: usize) {
-        assert!(
-            position < self.cap,
-            "position {} is out of bounds for capacity {}",
-            position,
-            self.cap
-        );
+        if position >= self.cap {
+            self.reserve(position + 1);
+        }
 
         for layer in &mut self.layers {
             let slot = position / BITS;
@@ -285,12 +278,9 @@ impl BitSet {
     /// assert!(set.is_empty());
     /// ```
     pub fn clear(&mut self, mut position: usize) {
-        assert!(
-            position < self.cap,
-            "position {} is out of bounds for capacity {}",
-            position,
-            self.cap
-        );
+        if position >= self.cap {
+            return;
+        }
 
         for layer in &mut self.layers {
             let slot = position / BITS;
@@ -316,7 +306,10 @@ impl BitSet {
     /// assert!(!set.test(3));
     /// ```
     pub fn test(&self, position: usize) -> bool {
-        assert!(position < self.cap);
+        if position >= self.cap {
+            return false;
+        }
+
         let slot = position / BITS;
         let offset = position % BITS;
         self.layers[0].test(slot, offset)
@@ -718,6 +711,11 @@ impl AtomicBitSet {
     /// We can do this to an [AtomicBitSet] since the required modifications
     /// that needs to be performed against each layer are idempotent of the
     /// order in which they are applied.
+    ///
+    /// # Panics
+    ///
+    /// Call will panic if the position is not within the capacity of the
+    /// [AtomicBitSet].
     ///
     /// # Examples
     ///

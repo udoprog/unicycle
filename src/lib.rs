@@ -284,7 +284,7 @@ impl<F> Unordered<F> {
         let alternate = WakeSet::locked();
 
         Self {
-            pollable: Vec::with_capacity(16),
+            pollable: Vec::new(),
             slab: PinSlab::new(),
             max_capacity: 0,
             alternate_drain: None,
@@ -431,11 +431,9 @@ where
                 }
             }
 
-            if !swapped {
-                continue;
+            if swapped {
+                return Poll::Pending;
             }
-
-            return Poll::Pending;
         }
     }
 }
