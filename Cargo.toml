@@ -18,6 +18,7 @@ categories = ["asynchronous", "algorithms"]
 default = ["vec-safety"]
 parking-lot = ["lock_api", "parking_lot"]
 vec-safety = []
+test-op-count = []
 
 [dependencies]
 futures-core = "0.3.1"

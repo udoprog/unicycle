@@ -424,7 +424,7 @@ impl BitSet {
             layers: self.layers.as_mut_slice(),
             index: 0,
             depth,
-            #[cfg(test)]
+            #[cfg(feature = "test-op-count")]
             op_count: 0,
         }
     }
@@ -438,7 +438,7 @@ impl BitSet {
             layers: self.layers.as_mut_slice(),
             index,
             depth,
-            #[cfg(test)]
+            #[cfg(feature = "test-op-count")]
             op_count: 0,
         }
     }
@@ -470,7 +470,7 @@ impl BitSet {
             masks: [0; MAX_LAYERS],
             index: 0,
             depth,
-            #[cfg(test)]
+            #[cfg(feature = "test-op-count")]
             op_count: 0,
         }
     }
@@ -495,7 +495,7 @@ pub struct Drain<'a> {
     layers: &'a mut [Layer],
     index: usize,
     depth: usize,
-    #[cfg(test)]
+    #[cfg(feature = "test-op-count")]
     pub(crate) op_count: usize,
 }
 
@@ -521,12 +521,14 @@ impl Iterator for Drain<'_> {
         }
 
         loop {
-            #[cfg(test)]
+            #[cfg(feature = "test-op-count")]
             {
                 self.op_count += 1;
             }
 
             let offset = self.index / WIDTHS[self.depth];
+            // Unsafe version:
+            // let slot = unsafe { self.layers.get_unchecked_mut(self.depth).get_unchecked_mut(offset) };
             let slot = &mut self.layers[self.depth][offset];
 
             if *slot == 0 {
@@ -571,12 +573,9 @@ impl Iterator for Drain<'_> {
             // Clear upper layers until we find one that is not set again -
             // then use that as hour new depth.
             for (depth, layer) in (1..).zip(self.layers[1..].iter_mut()) {
-                #[cfg(test)]
-                {
-                    self.op_count += 1;
-                }
-
-                let offset = self.index / WIDTHS[depth];
+                let offset = index / WIDTHS[depth];
+                // Unsafe version:
+                // let slot = unsafe { layer.get_unchecked_mut(offset) };
                 let slot = &mut layer[offset];
 
                 // If this doesn't hold, then we have previously failed at
@@ -614,7 +613,7 @@ pub struct Iter<'a> {
     masks: [u8; MAX_LAYERS],
     index: usize,
     depth: usize,
-    #[cfg(test)]
+    #[cfg(feature = "test-op-count")]
     pub(crate) op_count: usize,
 }
 
@@ -627,7 +626,7 @@ impl Iterator for Iter<'_> {
         }
 
         loop {
-            #[cfg(test)]
+            #[cfg(feature = "test-op-count")]
             {
                 self.op_count += 1;
             }
@@ -638,7 +637,10 @@ impl Iterator for Iter<'_> {
             let slot = if *mask == BITS as u8 {
                 0
             } else {
-                (self.layers[self.depth][offset] >> *mask) << *mask
+                // Unsafe version:
+                // let slot = unsafe { self.layers.get_unchecked(self.depth).get_unchecked(offset) };
+                let slot = self.layers[self.depth][offset];
+                (slot >> *mask) << *mask
             };
 
             if slot == 0 {
@@ -898,6 +900,20 @@ impl Layer {
         assert!(slot < self.cap);
         // Safety: We check that the slot fits within the capacity.
         unsafe { &mut *self.bits.add(slot) }
+    }
+
+    #[inline(always)]
+    #[allow(unused)]
+    unsafe fn get_unchecked(&self, slot: usize) -> usize {
+        debug_assert!(slot < self.cap);
+        *self.bits.add(slot)
+    }
+
+    #[inline(always)]
+    #[allow(unused)]
+    unsafe fn get_unchecked_mut(&mut self, slot: usize) -> &mut usize {
+        debug_assert!(slot < self.cap);
+        &mut *self.bits.add(slot)
     }
 }
 
@@ -1334,12 +1350,15 @@ mod tests {
 
             let mut drain = set.drain();
             assert_eq!(positions, (&mut drain).collect::<Vec<_>>());
-            let op_count = drain.op_count;
+
+            #[cfg(feature = "test-op-count")]
+            {
+                let op_count = drain.op_count;
+                assert_eq!($expected_op_count, op_count);
+            }
 
             // Assert that all layers are zero.
             assert!(set.layers().into_iter().all(|l| l.iter().all(|n| *n == 0)));
-
-            assert_eq!($expected_op_count, op_count);
         }};
     }
 
@@ -1356,9 +1375,12 @@ mod tests {
 
             let mut iter = set.iter();
             assert_eq!(positions, (&mut iter).collect::<Vec<_>>());
-            let op_count = iter.op_count;
 
-            assert_eq!($expected_op_count, op_count);
+            #[cfg(feature = "test-op-count")]
+            {
+                let op_count = iter.op_count;
+                assert_eq!($expected_op_count, op_count);
+            }
         }};
     }
 
