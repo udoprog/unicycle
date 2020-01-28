@@ -633,39 +633,37 @@ impl Iterator for Iter<'_> {
                 self.op_count += 1;
             }
 
-            let mask = &mut self.masks[self.depth];
-            let offset = self.index >> SHIFT2[self.depth];
+            let mask = self.masks[self.depth];
 
-            let slot = if *mask == BITS as u8 {
-                0
-            } else {
+            if mask != BITS as u8 {
+                let offset = self.index >> SHIFT2[self.depth];
                 // Unsafe version:
-                // let slot = unsafe { self.layers.get_unchecked(self.depth).get_unchecked(offset) };
-                let slot = self.layers[self.depth][offset];
-                (slot >> *mask) << *mask
-            };
+                let slot = unsafe { self.layers.get_unchecked(self.depth).get_unchecked(offset) };
+                // let slot = self.layers[self.depth][offset];
+                let slot = (slot >> mask) << mask;
 
-            if slot == 0 {
-                *mask = 0;
-                self.depth += 1;
+                if slot != 0 {
+                    let tail = slot.trailing_zeros() as usize;
+                    self.masks[self.depth] = (tail + 1) as u8;
 
-                if self.depth == self.layers.len() {
-                    self.layers = &[];
-                    return None;
+                    // Advance one layer down, setting the index to the bit matching
+                    // the offset we are interested in.
+                    if self.depth > 0 {
+                        self.index = (offset << SHIFT2[self.depth]) + (tail << SHIFT[self.depth]);
+                        self.depth -= 1;
+                        continue;
+                    }
+
+                    return Some(self.index + tail);
                 }
-            } else {
-                let tail = slot.trailing_zeros() as usize;
-                *mask = (tail + 1) as u8;
+            }
 
-                // Advance one layer down, setting the index to the bit matching
-                // the offset we are interested in.
-                if self.depth > 0 {
-                    self.index = (offset << SHIFT2[self.depth]) + (tail << SHIFT[self.depth]);
-                    self.depth -= 1;
-                    continue;
-                }
+            self.masks[self.depth] = 0;
+            self.depth += 1;
 
-                return Some(self.index + tail);
+            if self.depth == self.layers.len() {
+                self.layers = &[];
+                return None;
             }
         }
     }
