@@ -381,13 +381,6 @@ where
             return Poll::Ready(None);
         }
 
-        // Note: We defer swapping the waker until we are here since we `wake_by_ref` when
-        // reading results, and if we don't have any child tasks (slab is empty) no one would
-        // benefit from an update anyways.
-        if !shared.waker.swap(cx.waker()) {
-            return Poll::Pending;
-        }
-
         loop {
             let (snapshot, wake_last, swapped) = if let Some(snapshot) = alternate_drain.take() {
                 (
@@ -396,6 +389,13 @@ where
                     false,
                 )
             } else {
+                // Note: We defer swapping the waker until we are here since we `wake_by_ref` when
+                // reading results, and if we don't have any child tasks (slab is empty) no one would
+                // benefit from an update anyways.
+                if !shared.waker.swap(cx.waker()) {
+                    return Poll::Pending;
+                }
+
                 let wake_last =
                     ready!(shared.swap_active(cx, lock_wake_alternate, max_capacity, alternate));
                 (None, wake_last, true)
@@ -433,9 +433,22 @@ where
                 }
             }
 
+            // We've polled a full swapped out snapshot, it's time to yield.
+            // !swapped means that we got to this state by resuming draining the
+            // previously swapped out bitset, in which case we should continue
+            // another loop where we actually swap out the active bitset.
             if swapped {
-                return Poll::Pending;
+                break;
             }
         }
+
+        // We have successfully polled the last snapshot.
+        // Yield and make sure that we are polled again.
+        if !slab.is_empty() {
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+
+        Poll::Ready(None)
     }
 }
