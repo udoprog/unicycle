@@ -61,7 +61,9 @@
 //!
 //! This process can lead to an especially unfortunate cases where a small number of
 //! tasks can can cause the polling loop of [FuturesUnordered] to
-//! [spin abnormally]. This issue was [reported by Jon Gjengset].
+//! [spin abnormally].
+//! This issue was [reported by Jon Gjengset], and improved on by [limiting the
+//! amount FuturesUnordered is allowed to spin].
 //!
 //! Unicycle addresses this by limiting how frequently a child task may be polled
 //! per _polling cycle_. This is done by keeping two sets of polling interest and
@@ -71,6 +73,7 @@
 //! cycle. For more details, see the _Architecture_ section below.
 //!
 //! [spin abnormally]: https://github.com/udoprog/unicycle/blob/master/tests/spinning_futures_unordered.rs
+//! [limiting the amount FuturesUnordered is allowed to spin]: https://github.com/rust-lang/futures-rs/pull/2049
 //! [reported by Jon Gjengset]: https://github.com/rust-lang/futures-rs/issues/2047
 //!
 //! ## Architecture
