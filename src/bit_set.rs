@@ -37,7 +37,7 @@ const MAX_LAYERS: usize = BITS / 4;
 ///
 /// The shift is used to shift the bits in a given index to the least
 /// significant position so it can be used as an index for that layer.
-static SHIFTS: [usize; 11] = [
+static SHIFT: [usize; 12] = [
     0,
     1 * BITS_SHIFT,
     2 * BITS_SHIFT,
@@ -49,21 +49,23 @@ static SHIFTS: [usize; 11] = [
     8 * BITS_SHIFT,
     9 * BITS_SHIFT,
     10 * BITS_SHIFT,
+    11 * BITS_SHIFT,
 ];
 
-/// Precalculated widths of each layer.
-static WIDTHS: [usize; 11] = [
-    BITS << SHIFTS[0],
-    BITS << SHIFTS[1],
-    BITS << SHIFTS[2],
-    BITS << SHIFTS[3],
-    BITS << SHIFTS[4],
-    BITS << SHIFTS[5],
-    BITS << SHIFTS[6],
-    BITS << SHIFTS[7],
-    BITS << SHIFTS[8],
-    BITS << SHIFTS[9],
-    BITS << SHIFTS[10],
+/// Same as `SHIFT`, but shifted to the "layer above it".
+static SHIFT2: [usize; 12] = [
+    1 * BITS_SHIFT,
+    2 * BITS_SHIFT,
+    3 * BITS_SHIFT,
+    4 * BITS_SHIFT,
+    5 * BITS_SHIFT,
+    6 * BITS_SHIFT,
+    7 * BITS_SHIFT,
+    8 * BITS_SHIFT,
+    9 * BITS_SHIFT,
+    10 * BITS_SHIFT,
+    11 * BITS_SHIFT,
+    12 * BITS_SHIFT,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -526,7 +528,7 @@ impl Iterator for Drain<'_> {
                 self.op_count += 1;
             }
 
-            let offset = self.index / WIDTHS[self.depth];
+            let offset = self.index >> SHIFT2[self.depth];
             // Unsafe version:
             // let slot = unsafe { self.layers.get_unchecked_mut(self.depth).get_unchecked_mut(offset) };
             let slot = &mut self.layers[self.depth][offset];
@@ -543,8 +545,8 @@ impl Iterator for Drain<'_> {
                 // We calculate the index based on the offset that we are
                 // currently at and the information we get at the current
                 // layer of bits.
-                self.index = (offset * WIDTHS[self.depth])
-                    + ((slot.trailing_zeros() as usize) << SHIFTS[self.depth]);
+                self.index = (offset << SHIFT2[self.depth])
+                    + ((slot.trailing_zeros() as usize) << SHIFT[self.depth]);
                 self.depth -= 1;
                 continue;
             }
@@ -573,7 +575,7 @@ impl Iterator for Drain<'_> {
             // Clear upper layers until we find one that is not set again -
             // then use that as hour new depth.
             for (depth, layer) in (1..).zip(self.layers[1..].iter_mut()) {
-                let offset = index / WIDTHS[depth];
+                let offset = index >> SHIFT2[depth];
                 // Unsafe version:
                 // let slot = unsafe { layer.get_unchecked_mut(offset) };
                 let slot = &mut layer[offset];
@@ -582,7 +584,7 @@ impl Iterator for Drain<'_> {
                 // populating the summary layers of the set.
                 debug_assert!(*slot != 0);
 
-                *slot &= !(1 << ((index >> SHIFTS[depth]) % BITS));
+                *slot &= !(1 << ((index >> SHIFT[depth]) % BITS));
 
                 if *slot != 0 {
                     // update the index to be the bottom of the next value set
@@ -592,8 +594,8 @@ impl Iterator for Drain<'_> {
                     // We calculate the index based on the offset that we are
                     // currently at and the information we get at the current
                     // layer of bits.
-                    self.index = (offset * WIDTHS[depth])
-                        + ((slot.trailing_zeros() as usize) << SHIFTS[depth]);
+                    self.index = (offset << SHIFT2[depth])
+                        + ((slot.trailing_zeros() as usize) << SHIFT[depth]);
                     return Some(index);
                 }
             }
@@ -632,7 +634,7 @@ impl Iterator for Iter<'_> {
             }
 
             let mask = &mut self.masks[self.depth];
-            let offset = self.index / WIDTHS[self.depth];
+            let offset = self.index >> SHIFT2[self.depth];
 
             let slot = if *mask == BITS as u8 {
                 0
@@ -658,7 +660,7 @@ impl Iterator for Iter<'_> {
                 // Advance one layer down, setting the index to the bit matching
                 // the offset we are interested in.
                 if self.depth > 0 {
-                    self.index = (offset * WIDTHS[self.depth]) + (tail << SHIFTS[self.depth]);
+                    self.index = (offset << SHIFT2[self.depth]) + (tail << SHIFT[self.depth]);
                     self.depth -= 1;
                     continue;
                 }
