@@ -53,19 +53,18 @@ async fn main() {
 You can think of abstractions like Unicycle as schedulers. They are provided a
 set of child tasks, and try to do their best to drive them to completion. In
 this regard, it's interesting to talk about _fairness_ in how the tasks are
-being driven - in the same degree as we talk about fairness in other forms of
-scheduling.
+being driven.
 
 The current implementation of [FuturesUnordered] maintains a queue of tasks
 interested in waking up. As a task is woken up, it's added to the head of this
-queue to signal it's interest. When [FuturesUnordered] is being polled, it
+queue to signal its interest. When [FuturesUnordered] is being polled, it
 checks the head of this queue in a loop. As long as there is a task interested
 in being woken up, this task will be polled. This procuedure has the side effect
-of tasks which aggressively signal interest in waking up will receive priority,
+of tasks which aggressively signal interest in waking up, will receive priority
 and be polled more frequently.
 
 This process can lead to an especially unfortunate cases where a small number of
-task can can cause the polling loop of [FuturesUnordered] to
+tasks can can cause the polling loop of [FuturesUnordered] to
 [spin abnormally]. This issue was [reported by Jon Gjengset].
 
 Unicycle addresses this by limiting how frequently a child task may be polled
