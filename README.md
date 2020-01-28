@@ -115,13 +115,12 @@ bitsets, waits until it has exclusive access to the now _alternate_ bitset, and
 drains it from all the indexes which have been flagged to determine which tasks
 to poll.
 Each task is then polled _once_ in order.
-If the task is [Ready], its result is added to a result queue.
+If the task is [Ready], its result is yielded.
+After we receive control again, we continue draining the alternate set in this
+manner until it is empty.
+When this is done we yield once, then we start the cycle over again.
 
 [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
-
-Unicycle now prioritizes draining the result queue above everything else. Once
-it is empty, we start the cycle over again.
-
 [PinSlab]: https://docs.rs/unicycle/latest/unicycle/struct.PinSlab.html
 [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
 [Unordered]: https://docs.rs/unicycle/latest/unicycle/struct.Unordered.html
