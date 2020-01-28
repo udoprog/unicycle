@@ -116,7 +116,7 @@
 
 pub use self::bit_set::{AtomicBitSet, BitSet};
 pub use self::pin_slab::PinSlab;
-use self::wake_set::{SharedWakeSet, WakeSet};
+use self::wake_set::{LocalWakeSet, SharedWakeSet, WakeSet};
 use self::waker::SharedWaker;
 use futures_core::Stream;
 use std::{
@@ -135,6 +135,15 @@ mod pin_slab;
 mod wake_set;
 mod waker;
 
+macro_rules! ready {
+    ($expr:expr) => {
+        match $expr {
+            Poll::Ready(value) => value,
+            Poll::Pending => return Poll::Pending,
+        }
+    };
+}
+
 /// Data that is shared across all sub-tasks.
 struct Shared {
     /// The currently registered parent waker.
@@ -149,6 +158,58 @@ impl Shared {
         Self {
             waker: SharedWaker::new(),
             wake_set: SharedWakeSet::new(),
+        }
+    }
+
+    /// Swap the active wake set with the alternate one.
+    fn swap_active<'a>(
+        &self,
+        cx: &mut Context<'_>,
+        lock_wake_alternate: &mut bool,
+        max_capacity: usize,
+        alternate: &'a mut *mut WakeSet,
+    ) -> Poll<&'a mut LocalWakeSet> {
+        unsafe {
+            if !*lock_wake_alternate {
+                {
+                    let wake_set = (**alternate).as_local_mut();
+
+                    if wake_set.set.capacity() <= max_capacity {
+                        wake_set.set.reserve(max_capacity);
+                    }
+                }
+
+                // Unlock. At this position, if someone adds an element to the wake set they are
+                // also bound to call wake, which will cause us to wake up.
+                //
+                // There is a race going on between locking and unlocking, and it's beneficial
+                // for child tasks to observe the locked state of the wake set so they refetch
+                // the other set instead of having to wait until another wakeup.
+                (**alternate).unlock_exclusive();
+
+                let next = mem::replace(alternate, ptr::null_mut());
+                *alternate = self.wake_set.swap(next);
+
+                *lock_wake_alternate = true;
+            }
+
+            // Make sure no one else is using the alternate wake.
+            //
+            // Safety: We are the only one swapping alternate, so at
+            // this point we know that we have access to the most recent
+            // active set. We _must_ call lock_exclusive before we
+            // can punt this into a mutable reference though, because at
+            // this point inner futures will still have access to references
+            // to it (under a lock!). We must wait for these to expire.
+            if !(**alternate).try_lock_exclusive() {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+
+            *lock_wake_alternate = false;
+            // Safety: While this is live we must _not_ mess with
+            // `alternate` in any way.
+            Poll::Ready((**alternate).as_local_mut())
         }
     }
 }
@@ -190,14 +251,15 @@ where
     max_capacity: usize,
     /// Shared parent waker.
     /// Includes the current wake target. Each time we poll, we swap back and
-    /// forth between this and `wake_alternate`.
+    /// forth between this and `alternate`.
     shared: Arc<Shared>,
     /// Alternate wake set, used for growing the existing set when futures are
     /// added. This is then swapped out with the active set to receive polls.
-    wake_alternate: *mut WakeSet,
+    alternate: *mut WakeSet,
     /// Flag intent to lock wake_alternative exclusively.
-    /// We set this flag instead of blocking on locking `wake_alternate` if
-    /// locking fails.
+    /// We set this flag instead of blocking on locking `alternate` if
+    /// locking fails. Because if this is the case, we've already swapped the
+    /// active wake set.
     lock_wake_alternate: bool,
     /// Pending outgoing results. Uses a queue to avoid interrupting polling.
     results: VecDeque<F::Output>,
@@ -232,7 +294,7 @@ where
             slab: PinSlab::new(),
             max_capacity: 0,
             shared: Arc::new(Shared::new()),
-            wake_alternate: Box::into_raw(Box::new(alternate)),
+            alternate: Box::into_raw(Box::new(alternate)),
             lock_wake_alternate: false,
             results: VecDeque::new(),
         }
@@ -296,12 +358,12 @@ where
         // alternate set is being dropped.
         let _write = self.shared.wake_set.prevent_drop_write();
 
-        // Safety: we uniquely own `wake_alternate`, so we are responsible for
+        // Safety: we uniquely own `alternate`, so we are responsible for
         // dropping it. This is asserted when we swap it out during a poll by
         // calling WakeSet::lock_exclusive. We are also the _only_ one
         // swapping `wake_alternative`, so we know that can't happen here.
         unsafe {
-            drop(Box::from_raw(self.wake_alternate));
+            drop(Box::from_raw(self.alternate));
         }
     }
 }
@@ -318,7 +380,7 @@ where
             ref mut results,
             ref mut slab,
             ref shared,
-            ref mut wake_alternate,
+            ref mut alternate,
             ref mut lock_wake_alternate,
             max_capacity,
             ..
@@ -342,48 +404,8 @@ where
             return Poll::Pending;
         }
 
-        let wake_last = unsafe {
-            if !*lock_wake_alternate {
-                {
-                    let wake_set = (**wake_alternate).as_local_mut();
-
-                    if wake_set.set.capacity() <= max_capacity {
-                        wake_set.set.reserve(max_capacity);
-                    }
-                }
-
-                // Unlock. At this position, if someone adds an element to the wake set they are
-                // also bound to call wake, which will cause us to wake up.
-                //
-                // There is a race going on between locking and unlocking, and it's beneficial
-                // for child tasks to observe the locked state of the wake set so they refetch
-                // the other set instead of having to wait until another wakeup.
-                (**wake_alternate).unlock_exclusive();
-
-                let next = mem::replace(wake_alternate, ptr::null_mut());
-                *wake_alternate = shared.wake_set.swap(next);
-
-                *lock_wake_alternate = true;
-            }
-
-            // Make sure no one else is using the alternate wake.
-            //
-            // Safety: We are the only one swapping wake_alternate, so at
-            // this point we know that we have access to the most recent
-            // active set. We _must_ call lock_exclusive before we
-            // can punt this into a mutable reference though, because at
-            // this point inner futures will still have access to references
-            // to it (under a lock!). We must wait for these to expire.
-            if !(**wake_alternate).try_lock_exclusive() {
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            }
-
-            *lock_wake_alternate = false;
-            // Safety: While this is live we must _not_ mess with
-            // `wake_alternate` in any way.
-            (**wake_alternate).as_local_mut()
-        };
+        let wake_last =
+            ready!(shared.swap_active(cx, lock_wake_alternate, max_capacity, alternate));
 
         let indexes = iter::from_fn(|| pollable.pop()).chain(wake_last.set.drain());
 
