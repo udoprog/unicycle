@@ -2,43 +2,67 @@
 
 extern crate test;
 
-use test::Bencher;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use futures::channel::oneshot;
-use futures::executor::block_on;
-use futures::future;
-use futures::stream::{FuturesUnordered, StreamExt};
-use futures::task::Poll;
-use std::collections::VecDeque;
-use std::thread;
+use crossbeam::queue::SegQueue;
+use futures::{channel::oneshot, executor::block_on, future, stream::StreamExt as _, task::Poll};
+use std::{sync::Arc, thread};
 
-const NUM: usize = 100_000;
-const EXPECTED: usize = 5000050000;
+pub fn polling_benchmark(c: &mut Criterion) {
+    {
+        let mut group = c.benchmark_group("poll overhead # futures");
 
-#[bench]
-fn unordered_oneshots_unicycle(b: &mut Bencher) {
-    use unicycle::Unordered;
+        for i in [10, 100, 1000, 2500, 5000, 7500, 10000].iter() {
+            group.bench_with_input(BenchmarkId::new("unicycle", i), i, |b, i| {
+                b.iter(|| unicycle(*i, 1))
+            });
+            group.bench_with_input(BenchmarkId::new("futures-rs", i), i, |b, i| {
+                b.iter(|| futures_rs(*i, 1))
+            });
+        }
+    }
 
-    b.iter(|| {
-        let mut txs = VecDeque::with_capacity(NUM);
+    {
+        let mut group = c.benchmark_group("poll overhead # threads");
+
+        for i in [1, 10, 20, 50, 100].iter() {
+            group.bench_with_input(BenchmarkId::new("unicycle", i), i, |b, i| {
+                b.iter(|| unicycle(10000, *i))
+            });
+            group.bench_with_input(BenchmarkId::new("futures-rs", i), i, |b, i| {
+                b.iter(|| futures_rs(10000, *i))
+            });
+        }
+    }
+
+    fn unicycle(num: usize, threads: usize) -> usize {
+        use unicycle::Unordered;
+
+        let txs = SegQueue::new();
         let mut rxs = Unordered::new();
 
-        for _ in 0..NUM {
+        let mut expected = 0usize;
+
+        for i in 0..num {
+            expected = expected.wrapping_add(i);
             let (tx, rx) = oneshot::channel();
-            txs.push_back(tx);
+            txs.push((i, tx));
             rxs.push(rx);
         }
 
-        thread::spawn(move || {
-            let mut num = 1usize;
+        let txs = Arc::new(txs);
 
-            while let Some(tx) = txs.pop_front() {
-                let _ = tx.send(num);
-                num += 1;
-            }
-        });
+        for _ in 0..threads {
+            let txs = txs.clone();
 
-        block_on(future::poll_fn(move |cx| {
+            thread::spawn(move || {
+                while let Ok((n, tx)) = txs.pop() {
+                    let _ = tx.send(n);
+                }
+            });
+        }
+
+        let result = block_on(future::poll_fn(move |cx| {
             let mut result = 0usize;
 
             loop {
@@ -50,34 +74,41 @@ fn unordered_oneshots_unicycle(b: &mut Bencher) {
                 }
             }
 
-            assert_eq!(EXPECTED, result);
-            Poll::Ready(())
-        }))
-    });
-}
+            Poll::Ready(expected)
+        }));
 
-#[bench]
-fn unordered_oneshots_futures(b: &mut Bencher) {
-    b.iter(|| {
-        let mut txs = VecDeque::with_capacity(NUM);
+        assert_eq!(expected, result);
+        result
+    }
+
+    fn futures_rs(num: usize, threads: usize) -> usize {
+        use futures::stream::FuturesUnordered;
+
+        let txs = SegQueue::new();
         let mut rxs = FuturesUnordered::new();
 
-        for _ in 0..NUM {
+        let mut expected = 0usize;
+
+        for i in 0..num {
+            expected = expected.wrapping_add(i);
             let (tx, rx) = oneshot::channel();
-            txs.push_back(tx);
+            txs.push((i, tx));
             rxs.push(rx);
         }
 
-        thread::spawn(move || {
-            let mut num = 1usize;
+        let txs = Arc::new(txs);
 
-            while let Some(tx) = txs.pop_front() {
-                let _ = tx.send(num);
-                num += 1;
-            }
-        });
+        for _ in 0..threads {
+            let txs = txs.clone();
 
-        block_on(future::poll_fn(move |cx| {
+            thread::spawn(move || {
+                while let Ok((n, tx)) = txs.pop() {
+                    let _ = tx.send(n);
+                }
+            });
+        }
+
+        let result = block_on(future::poll_fn(move |cx| {
             let mut result = 0usize;
 
             loop {
@@ -89,64 +120,13 @@ fn unordered_oneshots_futures(b: &mut Bencher) {
                 }
             }
 
-            assert_eq!(EXPECTED, result);
-            Poll::Ready(())
-        }))
-    });
+            Poll::Ready(expected)
+        }));
+
+        assert_eq!(expected, result);
+        result
+    }
 }
 
-/*#[bench]
-fn test_bitset(b: &mut Bencher) {
-    use unicycle::Unordered;
-
-    b.iter(|| {
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-
-        rt.block_on(async {
-            let mut futures = Unordered::new();
-
-            for _ in 0..500_000 {
-                futures.push(time::delay_for(Duration::from_millis(100 + (rand::random::<f32>() * 100f32) as u64)));
-            }
-
-            let mut count = 0u32;
-
-            while let Some(_) = futures.next().await {
-                count += 1;
-
-                if count == 500_000 {
-                    break;
-                }
-            }
-
-            count
-        });
-    });
-}
-
-#[bench]
-fn test_futures(b: &mut Bencher) {
-    use futures::stream::FuturesUnordered;
-
-    b.iter(|| {
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-
-        rt.block_on(async {
-            let mut futures = FuturesUnordered::new();
-
-            for _ in 0..500_000 {
-                futures.push(time::delay_for(Duration::from_millis(100 + (rand::random::<f32>() * 100f32) as u64)));
-            }
-
-            let mut count = 0u32;
-
-            while let Some(_) = futures.next().await {
-                count += 1;
-
-                if count == 500_000 {
-                    break;
-                }
-            }
-        });
-    });
-}*/
+criterion_group!(unordered, polling_benchmark);
+criterion_main!(unordered);

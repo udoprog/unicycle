@@ -1,9 +1,6 @@
-#![feature(test)]
-
-extern crate test;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use std::slice::SliceIndex;
-use test::Bencher;
 
 static INDEXES: [usize; 1000] = [
     77975, 92324, 20136, 15648, 52494, 60691, 80040, 40303, 49247, 29647, 99498, 34012, 42435,
@@ -83,109 +80,74 @@ static INDEXES: [usize; 1000] = [
     27625, 13628, 35616, 44849, 44396, 90444,
 ];
 
-fn hibitset<I: SliceIndex<[usize], Output = [usize]>>(index: I) -> hibitset::BitSet {
-    let mut set = hibitset::BitSet::with_capacity(1_000_000);
+pub fn bitset_benchmark(c: &mut Criterion) {
+    {
+        let mut group = c.benchmark_group("bitset iter");
 
-    for i in &INDEXES[index] {
-        set.add(*i as u32);
+        for n in [1, 10, 50, 100, 250, 500, 750, 1000].iter() {
+            group.bench_with_input(BenchmarkId::new("unicycle", n), n, |b, n| {
+                let set = unicycle(..*n);
+                b.iter(|| set.iter().collect::<Vec<_>>());
+            });
+
+            group.bench_with_input(BenchmarkId::new("hibitset", n), n, |b, n| {
+                let set = hibitset(..*n);
+                b.iter(|| (&set).into_iter().collect::<Vec<_>>());
+            });
+        }
     }
 
-    set
-}
+    {
+        let mut group = c.benchmark_group("bitset drain");
 
-fn local<I: SliceIndex<[usize], Output = [usize]>>(index: I) -> unicycle::BitSet {
-    let mut set = unicycle::BitSet::with_capacity(1_000_000);
+        for n in [1, 10, 50, 100, 250, 500, 750, 1000].iter() {
+            group.bench_with_input(BenchmarkId::new("unicycle", n), n, |b, n| {
+                let set = unicycle(..*n);
+                b.iter(|| set.clone().drain().collect::<Vec<_>>());
+            });
 
-    for i in &INDEXES[index] {
-        set.set(*i);
+            group.bench_with_input(BenchmarkId::new("hibitset", n), n, |b, n| {
+                use hibitset::DrainableBitSet as _;
+                let set = hibitset(..*n);
+                b.iter(|| (&mut set.clone()).drain().collect::<Vec<_>>());
+            });
+        }
     }
 
-    set
+    {
+        let mut group = c.benchmark_group("bitset clone all");
+
+        group.bench_function("unicycle", |b| {
+            let set = unicycle(..);
+            b.iter(|| set.clone());
+        });
+
+        group.bench_function("hibitset", |b| {
+            let set = hibitset(..);
+            b.iter(|| set.clone());
+        });
+    }
+
+    fn hibitset<I: SliceIndex<[usize], Output = [usize]>>(index: I) -> hibitset::BitSet {
+        let mut set = hibitset::BitSet::with_capacity(1_000_000);
+
+        for i in &INDEXES[index] {
+            set.add(*i as u32);
+        }
+
+        set
+    }
+
+    fn unicycle<I: SliceIndex<[usize], Output = [usize]>>(index: I) -> unicycle::BitSet {
+        let mut set = unicycle::BitSet::with_capacity(1_000_000);
+
+        for i in &INDEXES[index] {
+            set.set(*i);
+        }
+
+        set
+    }
 }
 
-#[bench]
-fn test_hibitset_clone_all(b: &mut Bencher) {
-    let set = hibitset(..);
-    b.iter(|| set.clone());
-}
-
-#[bench]
-fn test_hibitset_iter_1000(b: &mut Bencher) {
-    let set = hibitset(..1000);
-    b.iter(|| (&set).into_iter().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_hibitset_drain_1000(b: &mut Bencher) {
-    use hibitset::DrainableBitSet as _;
-    let set = hibitset(..1000);
-    b.iter(|| (&mut set.clone()).drain().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_hibitset_iter_100(b: &mut Bencher) {
-    let set = hibitset(..100);
-    b.iter(|| (&set).into_iter().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_hibitset_drain_100(b: &mut Bencher) {
-    use hibitset::DrainableBitSet as _;
-    let set = hibitset(..100);
-    b.iter(|| (&mut set.clone()).drain().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_hibitset_iter_10(b: &mut Bencher) {
-    let set = hibitset(..10);
-    b.iter(|| (&set).into_iter().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_hibitset_drain_10(b: &mut Bencher) {
-    use hibitset::DrainableBitSet as _;
-    let set = hibitset(..10);
-    b.iter(|| (&mut set.clone()).drain().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_bitset_clone_all(b: &mut Bencher) {
-    let set = local(..);
-    b.iter(|| set.clone());
-}
-
-#[bench]
-fn test_bitset_iter_1000(b: &mut Bencher) {
-    let set = local(..1000);
-    b.iter(|| set.iter().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_bitset_drain_1000(b: &mut Bencher) {
-    let set = local(..1000);
-    b.iter(|| set.clone().drain().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_bitset_iter_100(b: &mut Bencher) {
-    let set = local(..100);
-    b.iter(|| set.iter().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_bitset_drain_100(b: &mut Bencher) {
-    let set = local(..100);
-    b.iter(|| set.clone().drain().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_bitset_iter_10(b: &mut Bencher) {
-    let set = local(..10);
-    b.iter(|| set.iter().collect::<Vec<_>>());
-}
-
-#[bench]
-fn test_bitset_drain_10(b: &mut Bencher) {
-    let set = local(..10);
-    b.iter(|| set.clone().drain().collect::<Vec<_>>());
-}
+criterion_group!(bitset, bitset_benchmark);
+criterion_main!(bitset);

@@ -31,3 +31,13 @@ rand = "0.7.3"
 futures = "0.3.1"
 pin-utils = "0.1.0-alpha.4"
 hibitset = "0.6.2"
+criterion = "0.3"
+crossbeam = "0.7.3"
+
+[[bench]]
+name = "bitset"
+harness = false
+
+[[bench]]
+name = "unordered"
+harness = false
