@@ -55,22 +55,27 @@
 //! interested in waking up. As a task is woken up, it's added to the head of this
 //! queue to signal its interest. When [FuturesUnordered] is being polled, it
 //! checks the head of this queue in a loop. As long as there is a task interested
-//! in being woken up, this task will be polled. This procuedure has the side effect
-//! of tasks which aggressively signal interest in waking up, will receive priority
-//! and be polled more frequently.
-//!
-//! This process can lead to an especially unfortunate cases where a small number of
-//! tasks can can cause the polling loop of [FuturesUnordered] to
-//! [spin abnormally].
+//! in being woken up, this task will be polled.
+//! This process has a side effect of tasks who aggressively signal interest in
+//! waking up will receive priority and be polled more frequently.
+//! This can lead to instances where a small number of tasks can can cause the
+//! polling loop of [FuturesUnordered] to [spin abnormally].
 //! This issue was [reported by Jon Gjengset], and improved on by [limiting the
 //! amount FuturesUnordered is allowed to spin].
 //!
 //! Unicycle addresses this by limiting how frequently a child task may be polled
-//! per _polling cycle_. This is done by keeping two sets of polling interest and
-//! atomically swapping it out once we are polling, then taking the swapped out set
-//! and use as a basis for what to poll in order, but only _once_. Additional
-//! wakeups are only registered in the swapped in set which will be polled the next
-//! cycle. For more details, see the _Architecture_ section below.
+//! per _polling cycle_.
+//! This is done by tracking polling interest in two separate sets.
+//! Once we are polled, we swap out the active set, then take the swapped out set
+//! and use as a basis for what to poll in order, but we limit ourselves to only
+//! poll _once_ per child task.
+//! Additional wakeups are only registered in the swapped in set which will be
+//! polled the next cycle.
+//!
+//! This way we hope to achieve a higher degree of fairness, never favoring the
+//! behavior of one particular task.
+//!
+//! For more details, see the _Architecture_ section below.
 //!
 //! [spin abnormally]: https://github.com/udoprog/unicycle/blob/master/tests/spinning_futures_unordered.rs
 //! [limiting the amount FuturesUnordered is allowed to spin]: https://github.com/rust-lang/futures-rs/pull/2049
