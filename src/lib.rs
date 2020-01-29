@@ -53,11 +53,13 @@
 //!
 //! The current implementation of [FuturesUnordered] maintains a queue of tasks
 //! interested in waking up. As a task is woken up, it's added to the head of this
-//! queue to signal its interest. When [FuturesUnordered] is being polled, it
-//! checks the head of this queue in a loop. As long as there is a task interested
-//! in being woken up, this task will be polled.
+//! queue to signal its interest.
+//! When [FuturesUnordered] is being polled, it drains this queue in a loop and
+//! polls the associated task.
 //! This process has a side effect of tasks who aggressively signal interest in
-//! waking up will receive priority and be polled more frequently.
+//! waking up will receive priority and be polled more frequently, since there is a
+//! higher chance that while the queue is being drained, their interest will be
+//! re-added to the queue.
 //! This can lead to instances where a small number of tasks can can cause the
 //! polling loop of [FuturesUnordered] to [spin abnormally].
 //! This issue was [reported by Jon Gjengset], and improved on by [limiting the
