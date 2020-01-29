@@ -645,8 +645,8 @@ impl Iterator for Iter<'_> {
             if mask != BITS as u8 {
                 let offset = self.index >> SHIFT2[self.depth];
                 // Unsafe version:
-                let slot = unsafe { self.layers.get_unchecked(self.depth).get_unchecked(offset) };
-                // let slot = self.layers[self.depth][offset];
+                // let slot = unsafe { self.layers.get_unchecked(self.depth).get_unchecked(offset) };
+                let slot = self.layers[self.depth][offset];
                 let slot = (slot >> mask) << mask;
 
                 if slot != 0 {
