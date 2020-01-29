@@ -91,6 +91,28 @@ impl<T> PinSlab<T> {
 
     /// Access the given key as a pinned mutable value.
     pub fn get_pin_mut(&mut self, key: usize) -> Option<Pin<&mut T>> {
+        // Safety: all storage is pre-allocated in chunks, and each chunk
+        // doesn't move. We only provide mutators to drop the storage through
+        // `remove` (but it doesn't return it).
+        unsafe {
+            let entry = self.internal_get_mut(key)?;
+            Some(Pin::new_unchecked(entry))
+        }
+    }
+
+    /// Get a mutable reference to the value at the given slot.
+    pub fn get_mut(&mut self, key: usize) -> Option<&mut T>
+    where
+        T: Unpin,
+    {
+        // Safety: simply exposing the internal function in case `T: Unpin` is
+        // safe.
+        unsafe { self.internal_get_mut(key) }
+    }
+
+    /// Get a mutable reference to the value at the given slot.
+    #[inline(always)]
+    unsafe fn internal_get_mut(&mut self, key: usize) -> Option<&mut T> {
         let (slot, offset, len) = calculate_key(key);
         let slot = *self.slots.get_mut(slot)?;
 
@@ -98,15 +120,13 @@ impl<T> PinSlab<T> {
         // As long as we have access to it, we know that we will only find
         // initialized entries assuming offset < len.
         debug_assert!(offset < len);
-        let entry = match unsafe { &mut *slot.as_ptr().add(offset) } {
+
+        let entry = match &mut *slot.as_ptr().add(offset) {
             Entry::Occupied(entry) => entry,
             _ => return None,
         };
 
-        // Safety: all storage is pre-allocated in chunks, and each chunk
-        // doesn't move. We only provide mutators to drop the storage through
-        // `remove` (but it doesn't return it).
-        Some(unsafe { Pin::new_unchecked(entry) })
+        Some(entry)
     }
 
     /// Remove the key from the slab.

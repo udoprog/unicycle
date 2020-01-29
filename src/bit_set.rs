@@ -353,14 +353,21 @@ impl BitSet {
             new.next();
         }
 
-        let remaining = new.clone().count();
-
-        // Add new layers!
-        if remaining > 0 {
-            self.layers.reserve_exact(remaining);
+        if self.layers.is_empty() {
             self.layers.extend(new.map(|l| Layer::with_capacity(l.cap)));
+        } else {
+            // Fill in new layers since we needed to expand.
+            //
+            // Note: structure is guaranteed to only have one usize at the top
+            // so we only need to bother looking at that when we grow.
+            for (depth, l) in (self.layers.len() - 1..).zip(new) {
+                let mut layer = Layer::with_capacity(l.cap);
+                layer[0] = if self.layers[depth][0] > 0 { 1 } else { 0 };
+                self.layers.push(layer);
+            }
         }
 
+        // Add new layers!
         self.cap = cap;
     }
 
@@ -433,8 +440,8 @@ impl BitSet {
 
     /// Start a drain operation using the given configuration parameters.
     ///
-    /// These are usually acquired from [Drain::save], and can be used to resume
-    /// draining at a specific point.
+    /// These are usually acquired from [Drain::snapshot], and can be used to
+    /// resume draining at a specific point.
     pub fn drain_from(&mut self, DrainSnapshot(index, depth): DrainSnapshot) -> Drain<'_> {
         Drain {
             layers: self.layers.as_mut_slice(),
@@ -1155,6 +1162,10 @@ mod vec_safety {
 
         pub fn last(&self) -> Option<&T> {
             self.as_slice().last()
+        }
+
+        pub fn push(&mut self, value: T) {
+            self.as_vec(|vec| vec.push(value));
         }
 
         pub unsafe fn from_raw_parts(data: *mut T, len: usize, cap: usize) -> Self {

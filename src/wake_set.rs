@@ -51,6 +51,12 @@ impl WakeSet {
         self.lock.try_lock_exclusive_immediate()
     }
 
+    pub(crate) fn lock_exclusive(&self) {
+        while !self.try_lock_exclusive() {
+            std::sync::atomic::spin_loop_hint();
+        }
+    }
+
     pub(crate) fn unlock_exclusive(&self) {
         self.lock.unlock_exclusive_immediate();
     }
