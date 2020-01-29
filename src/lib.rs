@@ -300,6 +300,10 @@ pub struct Unordered<F, S> {
     /// added. This is then swapped out with the active set to receive polls.
     alternate: *mut WakeSet,
     /// The capacity of the active bit set.
+    ///
+    /// This is used to determine if we need to swap out the active set in case
+    /// the alternate has grown. We store it locally instead of accessing it
+    /// through `shared` since it's a hot field to access.
     active_capacity: usize,
     /// Marker for the sentinel.
     _marker: marker::PhantomData<S>,
@@ -324,15 +328,7 @@ impl<F> Unordered<F, Futures> {
     /// futures.push(async { 42 });
     /// ```
     pub fn new() -> Self {
-        let alternate = WakeSet::locked();
-
-        Self {
-            slab: PinSlab::new(),
-            shared: Arc::new(Shared::new()),
-            alternate: Box::into_raw(Box::new(alternate)),
-            active_capacity: 0,
-            _marker: marker::PhantomData,
-        }
+        Self::new_internal()
     }
 }
 
@@ -363,15 +359,7 @@ impl<F> Unordered<F, Streams> {
     /// }
     /// ```
     pub fn streams() -> Self {
-        let alternate = WakeSet::locked();
-
-        Self {
-            slab: PinSlab::new(),
-            shared: Arc::new(Shared::new()),
-            alternate: Box::into_raw(Box::new(alternate)),
-            active_capacity: 0,
-            _marker: marker::PhantomData,
-        }
+        Self::new_internal()
     }
 }
 
@@ -405,19 +393,22 @@ impl<F> Unordered<F, IndexedStreams> {
     /// }
     /// ```
     pub fn indexed_streams() -> Self {
-        let alternate = WakeSet::locked();
-
-        Self {
-            slab: PinSlab::new(),
-            shared: Arc::new(Shared::new()),
-            alternate: Box::into_raw(Box::new(alternate)),
-            active_capacity: 0,
-            _marker: marker::PhantomData,
-        }
+        Self::new_internal()
     }
 }
 
 impl<T, S> Unordered<T, S> {
+    #[inline(always)]
+    fn new_internal() -> Self {
+        Self {
+            slab: PinSlab::new(),
+            shared: Arc::new(Shared::new()),
+            alternate: Box::into_raw(Box::new(WakeSet::locked())),
+            active_capacity: 0,
+            _marker: marker::PhantomData,
+        }
+    }
+
     /// Test if the collection of futures is empty.
     ///
     /// # Examples
