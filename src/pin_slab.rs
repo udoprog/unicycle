@@ -100,7 +100,35 @@ impl<T> PinSlab<T> {
         }
     }
 
+    /// Get a reference to the value at the given slot.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::PinSlab;
+    ///
+    /// let mut slab = PinSlab::new();
+    /// let key = slab.insert(42);
+    /// assert_eq!(Some(&42), slab.get(key));
+    /// ```
+    pub fn get(&mut self, key: usize) -> Option<&T> {
+        // Safety: We only use this to acquire an immutable reference.
+        // The internal calculation guarantees that the key is in bounds.
+        unsafe { self.internal_get(key) }
+    }
+
     /// Get a mutable reference to the value at the given slot.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::PinSlab;
+    ///
+    /// let mut slab = PinSlab::new();
+    /// let key = slab.insert(42);
+    /// *slab.get_mut(key).unwrap() = 43;
+    /// assert_eq!(Some(&43), slab.get(key));
+    /// ```
     pub fn get_mut(&mut self, key: usize) -> Option<&mut T>
     where
         T: Unpin,
@@ -122,6 +150,25 @@ impl<T> PinSlab<T> {
         debug_assert!(offset < len);
 
         let entry = match &mut *slot.as_ptr().add(offset) {
+            Entry::Occupied(entry) => entry,
+            _ => return None,
+        };
+
+        Some(entry)
+    }
+
+    /// Get a reference to the value at the given slot.
+    #[inline(always)]
+    unsafe fn internal_get(&mut self, key: usize) -> Option<&T> {
+        let (slot, offset, len) = calculate_key(key);
+        let slot = *self.slots.get(slot)?;
+
+        // Safety: all slots are fully allocated and initialized in `new_slot`.
+        // As long as we have access to it, we know that we will only find
+        // initialized entries assuming offset < len.
+        debug_assert!(offset < len);
+
+        let entry = match &*slot.as_ptr().add(offset) {
             Entry::Occupied(entry) => entry,
             _ => return None,
         };
@@ -163,6 +210,29 @@ impl<T> PinSlab<T> {
         }
 
         true
+    }
+
+    /// Clear all available data in the PinSlot.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::PinSlab;
+    ///
+    /// let mut slab = PinSlab::new();
+    /// assert_eq!(0, slab.insert(42));
+    /// slab.clear();
+    /// assert!(slab.get(0).is_none());
+    /// ```
+    pub fn clear(&mut self) {
+        for (len, entry) in slot_sizes().zip(self.slots.iter_mut()) {
+            // reconstruct the vector for the slot.
+            drop(unsafe { Vec::from_raw_parts(entry.as_ptr(), len, len) });
+        }
+
+        unsafe {
+            self.slots.set_len(0);
+        }
     }
 
     /// Construct a new slot.
@@ -224,13 +294,7 @@ impl<T> Default for PinSlab<T> {
 
 impl<T> Drop for PinSlab<T> {
     fn drop(&mut self) {
-        // Iterate over all slots and reconstruct each vector - then deallocate
-        // it.
-
-        for (len, entry) in slot_sizes().zip(self.slots.iter_mut()) {
-            // reconstruct the vector for the slot.
-            drop(unsafe { Vec::from_raw_parts(entry.as_ptr(), len, len) });
-        }
+        self.clear();
     }
 }
 

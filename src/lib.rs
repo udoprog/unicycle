@@ -513,6 +513,10 @@ impl<T> Default for Unordered<T, Futures> {
 
 impl<T, S> Drop for Unordered<T, S> {
     fn drop(&mut self) {
+        // Cancel all child futures in an attempt to prevent them from
+        // attempting to call wake on the shared wake set.
+        self.slab.clear();
+
         // We intend to drop both wake sets. Therefore we need exclusive access
         // to both wakers. Unfortunately that means that at this point, any call
         // to wakes will have to serialize behind the shared wake set while the
