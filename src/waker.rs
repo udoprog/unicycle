@@ -96,29 +96,36 @@ impl SharedWaker {
 
     /// Wake the shared waker by ref.
     pub(crate) fn wake_by_ref(&self) {
-        if let Some(guard) = self.lock.try_lock_shared() {
+        if let Some(_guard) = self.lock.try_lock_shared() {
             let waker = unsafe { &*self.waker.get() };
             waker.wake_by_ref();
-            drop(guard);
         }
     }
 
     /// Swap out the current waker, dropping the one that was previously in
     /// place.
-    pub(crate) fn swap(&self, waker: &Waker) -> bool {
-        if let Some(guard) = self.lock.try_lock_exclusive_guard() {
-            let shared_waker = unsafe { &mut *self.waker.get() };
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that they are the only one who will attempt to lock
+    /// the waker exclusively.
+    pub(crate) unsafe fn swap(&self, waker: &Waker) -> bool {
+        let shared_waker = self.waker.get();
 
-            if !shared_waker.will_wake(waker) {
-                *shared_waker = waker.clone();
-            }
-
-            drop(guard);
-            true
-        } else {
-            waker.wake_by_ref();
-            false
+        // Safety: No need to lock the shared waker exclusively to access an
+        // immutable reference since the caller is assured to be the only one
+        // trying to swap.
+        if (*shared_waker).will_wake(waker) {
+            return true;
         }
+
+        if let Some(_guard) = self.lock.try_lock_exclusive_guard() {
+            *self.waker.get() = waker.clone();
+            return true;
+        }
+
+        waker.wake_by_ref();
+        false
     }
 }
 

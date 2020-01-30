@@ -170,13 +170,18 @@ impl Shared {
     /// Swap the active wake set with the alternate one.
     /// Also makes sure that the capacity of the active bitset is updated if the
     /// alternate one has.
-    fn swap_active<'a>(
+    ///
+    /// # Safety
+    ///
+    /// Caller must be assured that they are the only one who is attempting to
+    /// swap out the wake sets.
+    unsafe fn swap_active<'a>(
         &self,
         cx: &mut Context<'_>,
         alternate: &'a mut *mut WakeSet,
         active_capacity: &mut usize,
     ) -> Poll<&'a mut LocalWakeSet> {
-        let wake_last = unsafe { (**alternate).as_local_mut() };
+        let wake_last = (**alternate).as_local_mut();
         let capacity = wake_last.set.capacity();
 
         if !wake_last.set.is_empty() && *active_capacity == capacity {
@@ -204,7 +209,7 @@ impl Shared {
         // There is a race going on between locking and unlocking, and it's beneficial
         // for child tasks to observe the locked state of the wake set so they refetch
         // the other set instead of having to wait until another wakeup.
-        unsafe { (**alternate).unlock_exclusive() };
+        (**alternate).unlock_exclusive();
 
         let next = mem::replace(alternate, ptr::null_mut());
         *alternate = self.wake_set.swap(next);
@@ -220,11 +225,11 @@ impl Shared {
         //
         // We also unfortunately can't yield here, because we've swapped the
         // alternate set which could be used when pushing to the set.
-        unsafe { (**alternate).lock_exclusive() };
+        (**alternate).lock_exclusive();
 
         // Safety: While this is live we must _not_ mess with
         // `alternate` in any way.
-        let wake_set = unsafe { (**alternate).as_local_mut() };
+        let wake_set = (**alternate).as_local_mut();
 
         // Make sure the capacity of the active set matches the now alternate
         // set.
@@ -553,10 +558,9 @@ where
             return Poll::Ready(None);
         }
 
-        // Safety: We know that the alternate bit set has capacity, since
-        // we've checked if the slab is empty, and that is where it's been
-        // populated.
-        let wake_last = ready!(shared.swap_active(cx, alternate, active_capacity));
+        // Safety: We have exclusive access to Unordered, which is the only
+        // implementation that is trying to swap the wake sets.
+        let wake_last = ready!(unsafe { shared.swap_active(cx, alternate, active_capacity) });
 
         for index in wake_last.set.drain() {
             // NB: Since we defer pollables a little, a future might
@@ -613,10 +617,9 @@ where
             return Poll::Ready(None);
         }
 
-        // Safety: We know that the alternate bit set has capacity, since
-        // we've checked if the slab is empty, and that is where it's been
-        // populated.
-        let wake_last = ready!(shared.swap_active(cx, alternate, active_capacity));
+        // Safety: We have exclusive access to Unordered, which is the only
+        // implementation that is trying to swap the wake sets.
+        let wake_last = ready!(unsafe { shared.swap_active(cx, alternate, active_capacity) });
 
         for index in wake_last.set.drain() {
             // NB: Since we defer pollables a little, a future might
@@ -680,10 +683,9 @@ where
             return Poll::Ready(None);
         }
 
-        // Safety: We know that the alternate bit set has capacity, since
-        // we've checked if the slab is empty, and that is where it's been
-        // populated.
-        let wake_last = ready!(shared.swap_active(cx, alternate, active_capacity));
+        // Safety: We have exclusive access to Unordered, which is the only
+        // implementation that is trying to swap the wake sets.
+        let wake_last = ready!(unsafe { shared.swap_active(cx, alternate, active_capacity) });
 
         for index in wake_last.set.drain() {
             // NB: Since we defer pollables a little, a future might
