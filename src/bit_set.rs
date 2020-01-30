@@ -1065,16 +1065,15 @@ fn round_capacity_up(cap: usize) -> usize {
         return 0;
     }
 
-    let cap = if BITS as u32 - cap.leading_zeros() == cap.trailing_zeros() + 1 {
+    if cap > 1 << 63 {
+        return std::usize::MAX;
+    }
+
+    // Cap is already a power of two.
+    let cap = if cap == 1usize << cap.trailing_zeros() {
         cap
     } else {
-        let leading = cap.leading_zeros();
-
-        if leading == 64 {
-            return std::usize::MAX;
-        }
-
-        1 << (64 - cap.leading_zeros() as usize)
+        1usize << BITS - cap.leading_zeros() as usize
     };
 
     usize::max(16, cap)
@@ -1451,5 +1450,6 @@ mod tests {
             (std::usize::MAX >> 1) + 1,
             round_capacity_up(std::usize::MAX >> 1)
         );
+        assert_eq!(std::usize::MAX, round_capacity_up((1usize << 63) + 1));
     }
 }
