@@ -63,17 +63,17 @@ set of child tasks, and try to do their best to drive them to completion. In
 this regard, it's interesting to talk about _fairness_ in how the tasks are
 being driven.
 
-The current implementation of [FuturesUnordered] maintains a queue of tasks
-interested in waking up. As a task is woken up, it's added to the head of this
-queue to signal its interest.
-When [FuturesUnordered] is being polled, it drains this queue in a loop and
-polls the associated task.
+The current implementation of [FuturesUnordered][futures-rs] maintains a queue
+of tasks interested in waking up. As a task is woken up, it's added to the head
+of this queue to signal its interest.
+When [FuturesUnordered][futures-rs] is being polled, it drains this queue in a
+loop and polls the associated task.
 This process has a side effect of tasks who aggressively signal interest in
 waking up will receive priority and be polled more frequently, since there is a
 higher chance that while the queue is being drained, their interest will be
 re-added to the queue.
 This can lead to instances where a small number of tasks can can cause the 
-polling loop of [FuturesUnordered] to [spin abnormally].
+polling loop of [FuturesUnordered][futures-rs] to [spin abnormally].
 This issue was [reported by Jon Gjengset], and improved on by [limiting the
 amount FuturesUnordered is allowed to spin].
 
@@ -88,8 +88,6 @@ polled the next cycle.
 
 This way we hope to achieve a higher degree of fairness, never favoring the
 behavior of one particular task.
-
-For more details, see the _Architecture_ section below.
 
 [spin abnormally]: https://github.com/udoprog/unicycle/blob/master/tests/spinning_futures_unordered.rs
 [limiting the amount FuturesUnordered is allowed to spin]: https://github.com/rust-lang/futures-rs/pull/2049
@@ -133,8 +131,8 @@ When this is done we yield once, then we start the cycle over again.
 [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
 [PinSlab]: https://docs.rs/unicycle/latest/unicycle/struct.PinSlab.html
 [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
-[FuturesUnordered]: https://docs.rs/unicycle/latest/unicycle/struct.FuturesUnordered.html
-[StreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/struct.StreamsUnordered.html
-[IndexedStreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/struct.IndexedStreamsUnordered.html
+[FuturesUnordered]: https://docs.rs/unicycle/latest/unicycle/type.FuturesUnordered.html
+[StreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.StreamsUnordered.html
+[IndexedStreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.IndexedStreamsUnordered.html
 [futures-rs]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
 [futures crate]: https://docs.rs/futures/latest/futures
