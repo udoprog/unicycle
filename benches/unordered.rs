@@ -36,10 +36,10 @@ pub fn polling_benchmark(c: &mut Criterion) {
     }
 
     fn unicycle(num: usize, threads: usize) -> usize {
-        use unicycle::Unordered;
+        use unicycle::FuturesUnordered;
 
         let txs = SegQueue::new();
-        let mut rxs = Unordered::new();
+        let mut rxs = FuturesUnordered::new();
 
         let mut expected = 0usize;
 

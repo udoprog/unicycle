@@ -138,8 +138,8 @@ pub fn bitset_benchmark(c: &mut Criterion) {
         set
     }
 
-    fn unicycle<I: SliceIndex<[usize], Output = [usize]>>(index: I) -> unicycle::BitSet {
-        let mut set = unicycle::BitSet::with_capacity(1_000_000);
+    fn unicycle<I: SliceIndex<[usize], Output = [usize]>>(index: I) -> unicycle::bit_set::BitSet {
+        let mut set = unicycle::bit_set::BitSet::with_capacity(1_000_000);
 
         for i in &INDEXES[index] {
             set.set(*i);
