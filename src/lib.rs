@@ -135,7 +135,7 @@ use std::{
     task::{Context, Poll},
 };
 
-mod bit_set;
+pub mod bit_set;
 mod lock;
 mod pin_slab;
 mod wake_set;

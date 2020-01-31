@@ -8,7 +8,7 @@
 //! [hibitset]: https://docs.rs/hibitset
 
 use std::{
-    iter, mem, ops, slice,
+    fmt, iter, mem, ops, slice,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -171,7 +171,7 @@ impl BitSet {
         self.cap
     }
 
-    /// Return a view of the underlying, raw layers.
+    /// Return a slice of the underlying, raw layers.
     ///
     /// # Examples
     ///
@@ -182,10 +182,15 @@ impl BitSet {
     /// set.set(1);
     /// set.set(5);
     /// // Note: two layers since we specified a capacity of 128.
-    /// assert_eq!(vec![&[0b100010, 0][..], &[1]], set.layers());
+    /// assert_eq!(vec![&[0b100010, 0][..], &[1]], set.as_slice());
     /// ```
-    pub fn layers(&self) -> Vec<&'_ [usize]> {
-        self.layers.as_slice().iter().map(Layer::as_slice).collect()
+    pub fn as_slice(&self) -> &[Layer] {
+        self.layers.as_slice()
+    }
+
+    /// Return a mutable slice of the underlying, raw layers.
+    pub fn as_mut_slice(&mut self) -> &mut [Layer] {
+        self.layers.as_mut_slice()
     }
 
     /// Convert in-place into an [AtomicBitSet].
@@ -440,8 +445,53 @@ impl BitSet {
 
     /// Start a drain operation using the given configuration parameters.
     ///
-    /// These are usually acquired from [Drain::snapshot], and can be used to
-    /// resume draining at a specific point.
+    /// These are acquired from [Drain::snapshot], and can be used to resume
+    /// draining at a specific point.
+    ///
+    /// Resuming a drain from a snapshot can be more efficient in certain
+    /// scenarios, like if the [BitSet] is very large.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(128);
+    ///
+    /// set.set(127);
+    /// set.set(32);
+    /// set.set(3);
+    ///
+    /// let mut it = set.drain();
+    ///
+    /// assert_eq!(Some(3), it.next());
+    /// let snapshot = it.snapshot();
+    /// // Forget the existing iterator.
+    /// drop(it);
+    ///
+    /// let snapshot = snapshot.expect("draining iteration hasn't ended");
+    ///
+    /// let mut it = set.drain_from(snapshot);
+    /// assert_eq!(Some(32), it.next());
+    /// assert_eq!(Some(127), it.next());
+    /// assert_eq!(None, it.next());
+    /// ```
+    ///
+    /// Trying to snapshot from an empty draining iterator:
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let mut set = BitSet::with_capacity(128);
+    ///
+    /// set.set(3);
+    ///
+    /// let mut it = set.drain();
+    ///
+    /// assert!(it.snapshot().is_some());
+    /// assert_eq!(Some(3), it.next());
+    /// assert!(it.snapshot().is_none());
+    /// ```
     pub fn drain_from(&mut self, DrainSnapshot(index, depth): DrainSnapshot) -> Drain<'_> {
         Drain {
             layers: self.layers.as_mut_slice(),
@@ -485,6 +535,22 @@ impl BitSet {
     }
 }
 
+impl<I: slice::SliceIndex<[Layer]>> ops::Index<I> for BitSet {
+    type Output = I::Output;
+
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        ops::Index::index(self.as_slice(), index)
+    }
+}
+
+impl<I: slice::SliceIndex<[Layer]>> ops::IndexMut<I> for BitSet {
+    #[inline]
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        ops::IndexMut::index_mut(self.as_mut_slice(), index)
+    }
+}
+
 impl Default for BitSet {
     fn default() -> Self {
         Self::new()
@@ -495,11 +561,12 @@ impl Default for BitSet {
 /// [Drain::snapshot].
 ///
 /// See [BitSet::drain_from] for examples.
+#[derive(Clone, Copy)]
 pub struct DrainSnapshot(usize, usize);
 
 /// A draining iterator of a [BitSet].
 ///
-/// See [BitSet::iter] for examples.
+/// See [BitSet::drain] for examples.
 pub struct Drain<'a> {
     layers: &'a mut [Layer],
     index: usize,
@@ -512,6 +579,8 @@ impl Drain<'_> {
     /// Save a snapshot of the of the draining iterator, unless it is done
     /// already. This can then be used by [BitSet::drain_from] to efficiently
     /// resume iteration from the given snapshot.
+    ///
+    /// See [BitSet::drain_from] for examples.
     pub fn snapshot(&self) -> Option<DrainSnapshot> {
         if self.layers.is_empty() {
             None
@@ -824,9 +893,11 @@ impl Default for AtomicBitSet {
 
 /// A single layer of bits.
 ///
-/// Note: doesn't store capacity, so must be deallocated by a BitSet.
+/// This is carefully constructed to be structurally equivalent to
+/// [AtomicLayer].
+/// So that coercing between the two is sound.
 #[repr(C)]
-struct Layer {
+pub struct Layer {
     /// Bits.
     bits: *mut usize,
     cap: usize,
@@ -838,6 +909,14 @@ unsafe impl Sync for Layer {}
 
 impl Layer {
     /// Allocate a new raw layer with the specified capacity.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::bit_set::Layer;
+    ///
+    /// assert_eq!(vec![0usize; 4], Layer::with_capacity(4));
+    /// ```
     pub fn with_capacity(cap: usize) -> Layer {
         // Create an already initialized layer of bits.
         let mut vec = mem::ManuallyDrop::new(vec![0usize; cap]);
@@ -848,17 +927,78 @@ impl Layer {
         }
     }
 
+    /// Create an iterator over the raw underlying data for the layer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::bit_set::Layer;
+    ///
+    /// let mut layer = Layer::with_capacity(2);
+    ///
+    /// let mut it = layer.iter();
+    /// assert_eq!(Some(&0), it.next());
+    /// assert_eq!(Some(&0), it.next());
+    /// assert_eq!(None, it.next());
+    ///
+    /// layer.set(0, 63);
+    ///
+    /// let mut it = layer.iter();
+    /// assert_eq!(Some(&(1 << 63)), it.next());
+    /// assert_eq!(Some(&0), it.next());
+    /// assert_eq!(None, it.next());
+    /// ```
+    pub fn iter(&self) -> slice::Iter<'_, usize> {
+        self.as_slice().iter()
+    }
+
     /// Return the given layer as a slice.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::bit_set::Layer;
+    ///
+    /// let mut layer = Layer::with_capacity(2);
+    /// assert_eq!(vec![0, 0], layer);
+    /// assert_eq!(0, layer.as_slice()[0]);
+    /// layer.set(0, 42);
+    /// assert_eq!(1 << 42, layer.as_slice()[0]);
+    /// ```
     pub fn as_slice(&self) -> &[usize] {
         unsafe { slice::from_raw_parts(self.bits, self.cap) }
     }
 
     /// Return the given layer as a mutable slice.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::bit_set::Layer;
+    ///
+    /// let mut layer = Layer::with_capacity(2);
+    /// assert_eq!(vec![0, 0], layer);
+    /// layer.as_mut_slice()[0] = 42;
+    /// assert_eq!(vec![42, 0], layer);
+    /// ```
     pub fn as_mut_slice(&mut self) -> &mut [usize] {
         unsafe { slice::from_raw_parts_mut(self.bits, self.cap) }
     }
 
     /// Reserve exactly the specified number of elements in this layer.
+    ///
+    /// Each added element is zerod as it is grown.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::bit_set::Layer;
+    ///
+    /// let mut layer = Layer::with_capacity(0);
+    /// assert_eq!(vec![], layer);
+    /// layer.grow(2);
+    /// assert_eq!(vec![0, 0], layer);
+    /// ```
     pub fn grow(&mut self, new: usize) {
         // Nothing to do.
         if self.cap >= new {
@@ -880,17 +1020,50 @@ impl Layer {
     }
 
     /// Set the given bit in this layer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::bit_set::Layer;
+    ///
+    /// let mut layer = Layer::with_capacity(2);
+    /// layer.set(0, 63);
+    /// assert_eq!(vec![1usize << 63, 0usize], layer);
+    /// ```
     pub fn set(&mut self, slot: usize, offset: usize) {
         *self.slot_mut(slot) |= 1 << offset;
     }
 
     /// Clear the given bit in this layer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::bit_set::Layer;
+    ///
+    /// let mut layer = Layer::with_capacity(2);
+    /// layer.set(0, 63);
+    /// assert_eq!(vec![1usize << 63, 0usize], layer);
+    /// layer.clear(0, 63);
+    /// assert_eq!(vec![0usize, 0usize], layer);
+    /// ```
     pub fn clear(&mut self, slot: usize, offset: usize) {
         *self.slot_mut(slot) &= !(1 << offset);
     }
 
     /// Set the given bit in this layer, where `element` indicates how many
     /// elements are affected per position.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::bit_set::Layer;
+    ///
+    /// let mut layer = Layer::with_capacity(2);
+    /// assert!(!layer.test(0, 63));
+    /// layer.set(0, 63);
+    /// assert!(layer.test(0, 63));
+    /// ```
     pub fn test(&self, slot: usize, offset: usize) -> bool {
         *self.slot(slot) & (1 << offset) > 0
     }
@@ -924,6 +1097,21 @@ impl Layer {
     }
 }
 
+impl From<Vec<usize>> for Layer {
+    fn from(mut value: Vec<usize>) -> Self {
+        if value.len() < value.capacity() {
+            value.shrink_to_fit();
+        }
+
+        let mut value = mem::ManuallyDrop::new(value);
+
+        Self {
+            bits: value.as_mut_ptr(),
+            cap: value.capacity(),
+        }
+    }
+}
+
 impl Clone for Layer {
     fn clone(&self) -> Self {
         let mut vec = mem::ManuallyDrop::new(self.as_slice().to_vec());
@@ -935,12 +1123,30 @@ impl Clone for Layer {
     }
 }
 
+impl fmt::Debug for Layer {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "{:?}", self.as_slice())
+    }
+}
+
 impl<S> PartialEq<S> for Layer
 where
     S: AsRef<[usize]>,
 {
     fn eq(&self, other: &S) -> bool {
-        other.as_ref() == self.as_slice()
+        self.as_slice() == other.as_ref()
+    }
+}
+
+impl<'a> PartialEq<Layer> for &'a [usize] {
+    fn eq(&self, other: &Layer) -> bool {
+        *self == other.as_slice()
+    }
+}
+
+impl<'a> PartialEq<Layer> for Vec<usize> {
+    fn eq(&self, other: &Layer) -> bool {
+        self.as_slice() == other.as_slice()
     }
 }
 
@@ -978,8 +1184,9 @@ impl Drop for Layer {
 
 /// A single layer of the bitset, that can be atomically updated.
 ///
-/// Note: This has the same memory layout as [Layer], so that coercing between
-/// them is possible.
+/// This is carefully constructed to be structurally equivalent to
+/// [Layer].
+/// So that coercing between the two is sound.
 #[repr(C)]
 struct AtomicLayer {
     bits: *mut AtomicUsize,
@@ -991,19 +1198,32 @@ unsafe impl Send for AtomicLayer {}
 unsafe impl Sync for AtomicLayer {}
 
 impl AtomicLayer {
-    /// Return the given layer as a slice.
-    pub fn as_slice(&self) -> &[AtomicUsize] {
-        unsafe { slice::from_raw_parts(self.bits, self.cap) }
-    }
-
-    /// Set the given bit in this layer, where `element` indicates how many
-    /// elements are affected per position.
+    /// Set the given bit in this layer atomically.
+    ///
+    /// This allows mutating the layer through a shared reference.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::BitSet;
+    ///
+    /// let set = BitSet::with_capacity(64);
+    ///
+    /// assert!(set.is_empty());
+    /// set.as_atomic().set(2);
+    /// assert!(!set.is_empty());
+    /// ```
     pub fn set(&self, slot: usize, offset: usize) {
         // Ordering: We rely on external synchronization when testing the layers
         // So total memory ordering does not matter as long as we apply all
         // necessary operations to all layers - which is guaranteed by
         // [AtomicBitSet::set].
         self.slot(slot).fetch_or(1 << offset, Ordering::Relaxed);
+    }
+
+    /// Return the given layer as a slice.
+    fn as_slice(&self) -> &[AtomicUsize] {
+        unsafe { slice::from_raw_parts(self.bits, self.cap) }
     }
 
     #[inline(always)]
@@ -1294,7 +1514,7 @@ mod tests {
         let mut layer1 = vec![0usize; 1];
         layer1[0] = 1 << 15 | 1 << 2 | 1 << 1 | 1;
 
-        assert_eq!(vec![&layer0[..], &layer1[..]], set.layers());
+        assert_eq!(vec![&layer0[..], &layer1[..]], set.as_slice());
     }
 
     #[test]
@@ -1368,7 +1588,10 @@ mod tests {
             }
 
             // Assert that all layers are zero.
-            assert!(set.layers().into_iter().all(|l| l.iter().all(|n| *n == 0)));
+            assert!(set
+                .as_slice()
+                .into_iter()
+                .all(|l| l.iter().all(|n| *n == 0)));
         }};
     }
 
