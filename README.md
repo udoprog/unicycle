@@ -111,28 +111,30 @@ using below.
 We now call the inserted future a _task_, and you can think of this index as a
 unique task identifier.
 
-[slab]: https://github.com/carllerche/slab
-[pin API]: https://doc.rust-lang.org/std/pin/index.html
-
-Next to the slab we maintain two bitsets, one _active_ and one _alternate_.
+Next to the slab we maintain two [bit sets], one _active_ and one _alternate_.
 When a task registers interest in waking up, the bit associated with its index
-is set in the active set, and the latest waker passed into [Unordered] is
-called to wake it up.
+is set in the active set, and the latest waker passed into [Unordered] is called
+to wake it up.
 Once [Unordered] is polled, it atomically swaps the active and alternate
-bitsets, waits until it has exclusive access to the now _alternate_ bitset, and
-drains it from all the indexes which have been flagged to determine which tasks
-to poll.
+[bit sets], waits until it has exclusive access to the now _alternate_ [BitSet],
+and drains it from all the indexes which have been flagged to determine which
+tasks to poll.
 Each task is then polled _once_ in order.
 If the task is [Ready], its result is yielded.
 After we receive control again, we continue draining the alternate set in this
-manner until it is empty.
+manner, until it is empty.
 When this is done we yield once, then we start the cycle over again.
 
+[slab]: https://github.com/carllerche/slab
+[pin API]: https://doc.rust-lang.org/std/pin/index.html
 [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
-[PinSlab]: https://docs.rs/unicycle/latest/unicycle/struct.PinSlab.html
+[PinSlab]: https://docs.rs/unicycle/latest/unicycle/pin_slab/struct.PinSlab.html
+[bit sets]: crate::bit_set::BitSet
+[BitSet]: https://docs.rs/unicycle/latest/unicycle/bit_set/struct.BitSet.html
 [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
 [FuturesUnordered]: https://docs.rs/unicycle/latest/unicycle/type.FuturesUnordered.html
 [StreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.StreamsUnordered.html
 [IndexedStreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.IndexedStreamsUnordered.html
+[Unordered]: https://docs.rs/unicycle/latest/unicycle/struct.Unordered.html
 [futures-rs]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
 [futures crate]: https://docs.rs/futures/latest/futures
