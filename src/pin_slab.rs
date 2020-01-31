@@ -5,6 +5,19 @@
 //! contains a growable collection of fixed-size regions called slots.
 //! This allows is to store immovable objects inside the slab, since growing the
 //! collection doesn't require the existing slots to move.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use unicycle::pin_slab::PinSlab;
+//!
+//! let mut slab = PinSlab::new();
+//!
+//! assert!(!slab.remove(0));
+//! let index = slab.insert(42);
+//! assert!(slab.remove(index));
+//! assert!(!slab.remove(index));
+//! ```
 
 use std::{mem, pin::Pin, ptr};
 
@@ -42,6 +55,19 @@ enum Entry<T> {
 
 impl<T> PinSlab<T> {
     /// Construct a new, empty [PinSlab] with the default slot size.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::pin_slab::PinSlab;
+    ///
+    /// let mut slab = PinSlab::new();
+    ///
+    /// assert!(!slab.remove(0));
+    /// let index = slab.insert(42);
+    /// assert!(slab.remove(index));
+    /// assert!(!slab.remove(index));
+    /// ```
     pub fn new() -> Self {
         Self {
             slots: Vec::new(),
@@ -55,7 +81,7 @@ impl<T> PinSlab<T> {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::PinSlab;
+    /// use unicycle::pin_slab::PinSlab;
     ///
     /// let mut slab = PinSlab::new();
     /// assert_eq!(0, slab.len());
@@ -71,7 +97,7 @@ impl<T> PinSlab<T> {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::PinSlab;
+    /// use unicycle::pin_slab::PinSlab;
     ///
     /// let mut slab = PinSlab::new();
     /// assert!(slab.is_empty());
@@ -105,7 +131,7 @@ impl<T> PinSlab<T> {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::PinSlab;
+    /// use unicycle::pin_slab::PinSlab;
     ///
     /// let mut slab = PinSlab::new();
     /// let key = slab.insert(42);
@@ -122,7 +148,7 @@ impl<T> PinSlab<T> {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::PinSlab;
+    /// use unicycle::pin_slab::PinSlab;
     ///
     /// let mut slab = PinSlab::new();
     /// let key = slab.insert(42);
@@ -179,10 +205,24 @@ impl<T> PinSlab<T> {
     /// Remove the key from the slab.
     ///
     /// Returns `true` if the entry was removed, `false` otherwise.
-    /// Removing a key which does not exist have no effect.
+    /// Removing a key which does not exist has no effect, and `false` will be
+    /// returned.
     ///
     /// We need to take care that we don't move it, hence we only perform
     /// operations over pointers below.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use unicycle::pin_slab::PinSlab;
+    ///
+    /// let mut slab = PinSlab::new();
+    ///
+    /// assert!(!slab.remove(0));
+    /// let index = slab.insert(42);
+    /// assert!(slab.remove(index));
+    /// assert!(!slab.remove(index));
+    /// ```
     pub fn remove(&mut self, key: usize) -> bool {
         let (slot, offset, len) = calculate_key(key);
 
@@ -217,7 +257,7 @@ impl<T> PinSlab<T> {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::PinSlab;
+    /// use unicycle::pin_slab::PinSlab;
     ///
     /// let mut slab = PinSlab::new();
     /// assert_eq!(0, slab.insert(42));

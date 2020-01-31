@@ -127,9 +127,9 @@
 //! [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
 //! [futures-rs]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
 //! [futures crate]: https://docs.rs/futures/latest/futures
+//! [BitSet]: crate::bit_set::BitSet
 
-pub use self::bit_set::{AtomicBitSet, BitSet, Drain, DrainSnapshot, Iter};
-pub use self::pin_slab::PinSlab;
+use self::pin_slab::PinSlab;
 use self::wake_set::{LocalWakeSet, SharedWakeSet, WakeSet};
 use self::waker::SharedWaker;
 use futures_core::Stream;
@@ -144,7 +144,7 @@ use std::{
 
 pub mod bit_set;
 mod lock;
-mod pin_slab;
+pub mod pin_slab;
 mod wake_set;
 mod waker;
 

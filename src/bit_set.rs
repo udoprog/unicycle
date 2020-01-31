@@ -6,6 +6,27 @@
 //! sharing between the local and atomic bitset variants.
 //!
 //! [hibitset]: https://docs.rs/hibitset
+//!
+//! # Examples
+//!
+//! ```rust
+//! use unicycle::bit_set::BitSet;
+//!
+//! let mut set = BitSet::new();
+//! assert!(set.is_empty());
+//! assert_eq!(0, set.capacity());
+//!
+//! set.set(127);
+//! set.set(128);
+//! assert!(!set.is_empty());
+//!
+//! assert!(set.test(128));
+//! assert_eq!(vec![127, 128], set.iter().collect::<Vec<_>>());
+//! assert!(!set.is_empty());
+//!
+//! assert_eq!(vec![127, 128], set.drain().collect::<Vec<_>>());
+//! assert!(set.is_empty());
+//! ```
 
 use std::{
     fmt, iter, mem, ops, slice,
@@ -107,7 +128,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::new();
     /// assert!(set.is_empty());
@@ -125,7 +146,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(1024);
     /// assert!(set.is_empty());
@@ -142,7 +163,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(64);
     /// assert!(set.is_empty());
@@ -161,7 +182,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::new();
     /// assert!(set.is_empty());
@@ -176,7 +197,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(128);
     /// set.set(1);
@@ -201,7 +222,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(1024);
     ///
@@ -223,7 +244,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let set = BitSet::with_capacity(1024);
     ///
@@ -241,7 +262,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(64);
     ///
@@ -271,7 +292,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(64);
     ///
@@ -302,7 +323,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(64);
     ///
@@ -330,7 +351,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     /// let mut set = BitSet::with_capacity(128);
     /// assert_eq!(128, set.capacity());
     /// set.reserve(250);
@@ -382,7 +403,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(128);
     /// set.set(127);
@@ -396,7 +417,7 @@ impl BitSet {
     /// Draining one bit at a time.
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(128);
     ///
@@ -413,7 +434,7 @@ impl BitSet {
     /// Saving the state of the draining iterator.
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(128);
     ///
@@ -454,7 +475,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(128);
     ///
@@ -466,7 +487,7 @@ impl BitSet {
     ///
     /// assert_eq!(Some(3), it.next());
     /// let snapshot = it.snapshot();
-    /// // Forget the existing iterator.
+    /// // Get rid of the existing iterator.
     /// drop(it);
     ///
     /// let snapshot = snapshot.expect("draining iteration hasn't ended");
@@ -480,7 +501,7 @@ impl BitSet {
     /// Trying to snapshot from an empty draining iterator:
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(128);
     ///
@@ -511,7 +532,7 @@ impl BitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(128);
     /// set.set(127);
@@ -771,7 +792,7 @@ impl AtomicBitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::AtomicBitSet;
+    /// use unicycle::bit_set::AtomicBitSet;
     ///
     /// let set = AtomicBitSet::new();
     /// let set = set.into_local();
@@ -798,7 +819,7 @@ impl AtomicBitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let set = BitSet::with_capacity(1024).into_atomic();
     /// set.set(1000);
@@ -831,7 +852,7 @@ impl AtomicBitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::new();
     /// set.reserve(1024);
@@ -860,7 +881,7 @@ impl AtomicBitSet {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let mut set = BitSet::with_capacity(1024).into_atomic();
     ///
@@ -1205,7 +1226,7 @@ impl AtomicLayer {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::BitSet;
+    /// use unicycle::bit_set::BitSet;
     ///
     /// let set = BitSet::with_capacity(64);
     ///
