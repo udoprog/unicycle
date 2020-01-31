@@ -3,9 +3,9 @@ use tokio::{stream::StreamExt as _, time};
 
 #[tokio::test(threaded_scheduler)]
 async fn test_bitset() {
-    use unicycle::Unordered;
+    use unicycle::FuturesUnordered;
 
-    let mut futures = Unordered::new();
+    let mut futures = FuturesUnordered::new();
 
     for _ in 0..1_000 {
         futures.push(time::delay_for(Duration::from_millis(
@@ -42,9 +42,9 @@ async fn test_futures() {
 #[tokio::test]
 async fn test_unicycle_streams() {
     use tokio::stream::{iter, StreamExt as _};
-    use unicycle::Unordered;
+    use unicycle::StreamsUnordered;
 
-    let mut streams = Unordered::streams();
+    let mut streams = StreamsUnordered::new();
     assert!(streams.is_empty());
 
     streams.push(iter(vec![1, 2, 3, 4]));

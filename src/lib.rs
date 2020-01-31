@@ -2,9 +2,15 @@
 #![allow(clippy::needless_doctest_main)]
 //! A scheduler for driving a large number of futures.
 //!
-//! Unicycle provides the [Unordered] type, which is a futures abstraction that
-//! runs a set of futures which may complete in any order.
-//! Similarly to [FuturesUnordered].
+//! Unicycle provides a collection of [Unordered] types:
+//!
+//! * [FuturesUnordered]
+//! * [StreamsUnordered]
+//! * [IndexedStreamsUnordered]
+//!
+//! These are async abstractions that runs a set of futures or streams which may
+//! complete in any order.
+//! Similarly to [FuturesUnordered][futures-rs] from the [futures crate].
 //! But we aim to provide a stronger guarantee of fairness (see below), and
 //! better memory locality for the futures being pollled.
 //!
@@ -30,7 +36,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let mut futures = unicycle::Unordered::new();
+//!     let mut futures = unicycle::FuturesUnordered::new();
 //!
 //!     futures.push(time::delay_for(Duration::from_secs(2)));
 //!     futures.push(time::delay_for(Duration::from_secs(3)));
@@ -119,7 +125,8 @@
 //!
 //! [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
 //! [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
-//! [FuturesUnordered]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
+//! [futures-rs]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
+//! [futures crate]: https://docs.rs/futures/latest/futures
 
 pub use self::bit_set::{AtomicBitSet, BitSet, Drain, DrainSnapshot, Iter};
 pub use self::pin_slab::PinSlab;
@@ -128,7 +135,7 @@ use self::waker::SharedWaker;
 use futures_core::Stream;
 use std::{
     future::Future,
-    marker, mem,
+    iter, marker, mem,
     pin::Pin,
     ptr,
     sync::Arc,
@@ -140,6 +147,93 @@ mod lock;
 mod pin_slab;
 mod wake_set;
 mod waker;
+
+/// A container for an unordered collection of [Future]s.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use tokio::{stream::StreamExt as _, time};
+/// use std::time::Duration;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let mut futures = unicycle::FuturesUnordered::new();
+///
+///     futures.push(time::delay_for(Duration::from_secs(2)));
+///     futures.push(time::delay_for(Duration::from_secs(3)));
+///     futures.push(time::delay_for(Duration::from_secs(1)));
+///
+///     while let Some(_) = futures.next().await {
+///         println!("tick");
+///     }
+///
+///     println!("done!");
+/// }
+/// ```
+pub type FuturesUnordered<T> = Unordered<T, Futures>;
+
+/// A container for an unordered collection of [Stream]s.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use tokio::{net::TcpListener, stream::StreamExt as _, time};
+/// use tokio_util::codec::{Framed, LengthDelimitedCodec};
+/// use std::error::Error;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn Error>> {
+///     let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
+///     let mut clients = unicycle::StreamsUnordered::new();
+///
+///     loop {
+///         tokio::select! {
+///             result = listener.accept() => {
+///                 let (stream, _) = result?;
+///                 clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
+///             },
+///             Some(frame) = clients.next() => {
+///                 println!("received frame: {:?}", frame);
+///             }
+///         }
+///     }
+/// }
+/// ```
+pub type StreamsUnordered<T> = Unordered<T, Streams>;
+
+/// A container for an unordered collection of [Stream]s, which also yields the
+/// index that produced the next item.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use tokio::{net::TcpListener, stream::StreamExt as _, time};
+/// use tokio_util::codec::{Framed, LengthDelimitedCodec};
+/// use std::error::Error;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn Error>> {
+///     let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
+///     let mut clients = unicycle::IndexedStreamsUnordered::new();
+///
+///     loop {
+///         tokio::select! {
+///             result = listener.accept() => {
+///                 let (stream, _) = result?;
+///                 clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
+///             },
+///             Some((index, frame)) = clients.next() => {
+///                 match frame {
+///                     Some(frame) => println!("{}: received frame: {:?}", index, frame),
+///                     None => println!("{}: client disconnected", index),
+///                 }
+///             }
+///         }
+///     }
+/// }
+/// ```
+pub type IndexedStreamsUnordered<T> = Unordered<T, IndexedStreams>;
 
 macro_rules! ready {
     ($expr:expr) => {
@@ -269,7 +363,12 @@ pub struct IndexedStreams(());
 
 impl Sentinel for IndexedStreams {}
 
-/// A container for an unordered collection of [Future]s.
+/// A container for an unordered collection of [Future]s or [Stream]s.
+///
+/// You should use one of the following type aliases to construct it:
+/// * [FuturesUnordered]
+/// * [StreamsUnordered]
+/// * [IndexedStreamsUnordered]
 ///
 /// # Examples
 ///
@@ -279,7 +378,7 @@ impl Sentinel for IndexedStreams {}
 ///
 /// #[tokio::main]
 /// async fn main() {
-///     let mut futures = unicycle::Unordered::new();
+///     let mut futures = unicycle::FuturesUnordered::new();
 ///
 ///     futures.push(time::delay_for(Duration::from_secs(2)));
 ///     futures.push(time::delay_for(Duration::from_secs(3)));
@@ -314,20 +413,20 @@ pub struct Unordered<F, S> {
     _marker: marker::PhantomData<S>,
 }
 
-unsafe impl<F, S> Send for Unordered<F, S> {}
-unsafe impl<F, S> Sync for Unordered<F, S> {}
+unsafe impl<T, S> Send for Unordered<T, S> {}
+unsafe impl<T, S> Sync for Unordered<T, S> {}
 
-impl<F, S> Unpin for Unordered<F, S> {}
+impl<T, S> Unpin for Unordered<T, S> {}
 
-impl<F> Unordered<F, Futures> {
-    /// Construct a new, empty [Unordered].
+impl<T> FuturesUnordered<T> {
+    /// Construct a new, empty [FuturesUnordered].
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::Unordered;
+    /// use unicycle::FuturesUnordered;
     ///
-    /// let mut futures = Unordered::new();
+    /// let mut futures = FuturesUnordered::new();
     /// assert!(futures.is_empty());
     ///
     /// futures.push(async { 42 });
@@ -337,18 +436,18 @@ impl<F> Unordered<F, Futures> {
     }
 }
 
-impl<F> Unordered<F, Streams> {
-    /// Construct a new, empty [Unordered] for streams.
+impl<T> StreamsUnordered<T> {
+    /// Construct a new, empty [StreamsUnordered].
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::Unordered;
+    /// use unicycle::StreamsUnordered;
     /// use tokio::stream::{StreamExt as _, iter};
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut streams = Unordered::streams();
+    ///     let mut streams = StreamsUnordered::new();
     ///     assert!(streams.is_empty());
     ///
     ///     streams.push(iter(vec![1, 2, 3, 4]));
@@ -363,26 +462,27 @@ impl<F> Unordered<F, Streams> {
     ///     assert_eq!(vec![1, 5, 2, 6, 3, 7, 4, 8], received);
     /// }
     /// ```
-    pub fn streams() -> Self {
+    pub fn new() -> Self {
         Self::new_internal()
     }
 }
 
-impl<F> Unordered<F, IndexedStreams> {
-    /// Construct a new, empty [Unordered] for indexed streams.
-    /// This is the same as [Unordered::streams], except that it yields the
-    /// index of the stream who'se value was just yielded, alongside the yielded
+impl<F> IndexedStreamsUnordered<F> {
+    /// Construct a new, empty [IndexedStreamsUnordered].
+    ///
+    /// This is the same as [StreamsUnordered], except that it yields the index
+    /// of the stream who'se value was just yielded, alongside the yielded
     /// value.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::Unordered;
+    /// use unicycle::IndexedStreamsUnordered;
     /// use tokio::stream::{StreamExt as _, iter};
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut streams = Unordered::indexed_streams();
+    ///     let mut streams = IndexedStreamsUnordered::new();
     ///     assert!(streams.is_empty());
     ///
     ///     streams.push(iter(vec![1, 2]));
@@ -394,10 +494,20 @@ impl<F> Unordered<F, IndexedStreams> {
     ///         received.push(value);
     ///     }
     ///
-    ///     assert_eq!(vec![(0, 1), (1, 5), (0, 2), (1, 6)], received);
+    ///     assert_eq!(
+    ///         vec![
+    ///             (0, Some(1)),
+    ///             (1, Some(5)),
+    ///             (0, Some(2)),
+    ///             (1, Some(6)),
+    ///             (0, None),
+    ///             (1, None)
+    ///         ],
+    ///         received
+    ///     );
     /// }
     /// ```
-    pub fn indexed_streams() -> Self {
+    pub fn new() -> Self {
         Self::new_internal()
     }
 }
@@ -419,9 +529,9 @@ impl<T, S> Unordered<T, S> {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::Unordered;
+    /// use unicycle::FuturesUnordered;
     ///
-    /// let mut futures = Unordered::<tokio::time::Delay, _>::new();
+    /// let mut futures = FuturesUnordered::<tokio::time::Delay>::new();
     /// assert!(futures.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
@@ -439,9 +549,9 @@ impl<T, S> Unordered<T, S> {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::Unordered;
+    /// use unicycle::FuturesUnordered;
     ///
-    /// let mut futures = Unordered::new();
+    /// let mut futures = FuturesUnordered::new();
     /// assert!(futures.is_empty());
     /// futures.push(async { 42 });
     /// assert!(!futures.is_empty());
@@ -460,13 +570,13 @@ impl<T, S> Unordered<T, S> {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::Unordered;
+    /// use unicycle::FuturesUnordered;
     /// use futures::future::poll_fn;
     /// use std::future::Future as _;
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut futures = Unordered::new();
+    ///     let mut futures = FuturesUnordered::new();
     ///     let index = futures.push(async { 42 });
     ///
     ///     let result = poll_fn(|cx| {
@@ -486,13 +596,13 @@ impl<T, S> Unordered<T, S> {
     /// # Examples
     ///
     /// ```rust
-    /// use unicycle::Unordered;
+    /// use unicycle::FuturesUnordered;
     /// use futures::future::{ready, poll_fn};
     /// use std::{pin::Pin, future::Future as _};
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut futures = Unordered::new();
+    ///     let mut futures = FuturesUnordered::new();
     ///     let index = futures.push(ready(42));
     ///
     ///     let result = poll_fn(|cx| {
@@ -663,11 +773,11 @@ where
     }
 }
 
-impl<T> Stream for Unordered<T, IndexedStreams>
+impl<T> Stream for IndexedStreamsUnordered<T>
 where
     T: Stream,
 {
-    type Item = (usize, T::Item);
+    type Item = (usize, Option<T::Item>);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let Self {
@@ -708,11 +818,13 @@ where
                     Some(value) => {
                         cx.waker().wake_by_ref();
                         shared.wake_set.wake(index);
-                        return Poll::Ready(Some((index, value)));
+                        return Poll::Ready(Some((index, Some(value))));
                     }
                     None => {
+                        cx.waker().wake_by_ref();
                         let removed = slab.remove(index);
                         debug_assert!(removed);
+                        return Poll::Ready(Some((index, None)));
                     }
                 }
             }
@@ -726,5 +838,40 @@ where
 
         cx.waker().wake_by_ref();
         Poll::Pending
+    }
+}
+
+impl<T, S> iter::Extend<T> for Unordered<T, S> {
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = T>,
+    {
+        for value in iter {
+            self.push(value);
+        }
+    }
+}
+
+impl<T> iter::FromIterator<T> for FuturesUnordered<T>
+where
+    T: Future,
+{
+    #[inline]
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut futures = FuturesUnordered::new();
+        futures.extend(iter);
+        futures
+    }
+}
+
+impl<T> iter::FromIterator<T> for StreamsUnordered<T>
+where
+    T: Stream,
+{
+    #[inline]
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut streams = StreamsUnordered::new();
+        streams.extend(iter);
+        streams
     }
 }

@@ -15,10 +15,10 @@ const EXPECTED: usize = 50005000;
 #[tokio::test]
 async fn benchmark_oneshots_unicycle() {
     for i in 0..1000 {
-        use unicycle::Unordered;
+        use unicycle::FuturesUnordered;
 
         let mut txs = VecDeque::with_capacity(NUM);
-        let mut rxs = Unordered::new();
+        let mut rxs = FuturesUnordered::new();
 
         for _ in 0..NUM {
             let (tx, rx) = oneshot::channel();

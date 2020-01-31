@@ -6,9 +6,17 @@
 
 A scheduler for driving a large number of futures.
 
-Unicycle provides the [Unordered] type, which is a futures abstraction that
-runs a set of futures which may complete in any order.
-Similarly to [FuturesUnordered].
+
+Unicycle provides a collection of [Unordered] types:
+ 
+ * [FuturesUnordered]
+ * [StreamsUnordered]
+ * [IndexedStreamsUnordered]
+ 
+These are async abstractions that runs a set of futures or streams which may
+complete in any order.
+Similarly to [FuturesUnordered][futures-rs] from the [futures crate].
+
 But we aim to provide a stronger guarantee of fairness (see below), and
 better memory locality for the futures being pollled.
 
@@ -125,5 +133,8 @@ When this is done we yield once, then we start the cycle over again.
 [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
 [PinSlab]: https://docs.rs/unicycle/latest/unicycle/struct.PinSlab.html
 [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
-[Unordered]: https://docs.rs/unicycle/latest/unicycle/struct.Unordered.html
-[FuturesUnordered]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
+[FuturesUnordered]: https://docs.rs/unicycle/latest/unicycle/struct.FuturesUnordered.html
+[StreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/struct.StreamsUnordered.html
+[IndexedStreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/struct.IndexedStreamsUnordered.html
+[futures-rs]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
+[futures crate]: https://docs.rs/futures/latest/futures

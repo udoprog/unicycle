@@ -1,14 +1,10 @@
-use futures::{
-    future::poll_fn,
-    stream::{FuturesUnordered, Stream as _},
-};
+use futures::{future::poll_fn, stream::Stream as _};
 use std::{
     cell::Cell,
     future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
-use unicycle::Unordered;
 
 struct Spinner<'a>(&'a Cell<usize>);
 
@@ -31,6 +27,8 @@ impl Future for Spinner<'_> {
 
 #[tokio::test]
 async fn test_spinning_futures_unordered() {
+    use futures::stream::FuturesUnordered;
+
     let count = Cell::new(0);
 
     let futures = FuturesUnordered::new();
@@ -49,9 +47,11 @@ async fn test_spinning_futures_unordered() {
 
 #[tokio::test]
 async fn test_spinning_unordered() {
+    use unicycle::FuturesUnordered;
+
     let count = Cell::new(0);
 
-    let mut futures = Unordered::new();
+    let mut futures = FuturesUnordered::new();
     futures.push(Spinner(&count));
     pin_utils::pin_mut!(futures);
 
