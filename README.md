@@ -39,14 +39,40 @@ should consider putting it in production.
 ```rust
 use tokio::{stream::StreamExt as _, time};
 use std::time::Duration;
+use unicycle::FuturesUnordered;
 
 #[tokio::main]
 async fn main() {
-    let mut futures = unicycle::Unordered::new();
+    let mut futures = FuturesUnordered::new();
 
     futures.push(time::delay_for(Duration::from_secs(2)));
     futures.push(time::delay_for(Duration::from_secs(3)));
     futures.push(time::delay_for(Duration::from_secs(1)));
+
+    while let Some(_) = futures.next().await {
+        println!("tick");
+    }
+
+    println!("done!");
+}
+```
+
+[Unordered] types can be created from iterators:
+
+```rust
+use tokio::{stream::StreamExt as _, time};
+use std::time::Duration;
+use unicycle::FuturesUnordered;
+
+#[tokio::main]
+async fn main() {
+    let mut futures = Vec::new();
+
+    futures.push(time::delay_for(Duration::from_secs(2)));
+    futures.push(time::delay_for(Duration::from_secs(3)));
+    futures.push(time::delay_for(Duration::from_secs(1)));
+
+    let mut futures = futures.into_iter().collect::<FuturesUnordered<_>>();
 
     while let Some(_) = futures.next().await {
         println!("tick");
