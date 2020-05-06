@@ -1,8 +1,6 @@
-use crate::{
-    bit_set::{AtomicBitSet, BitSet},
-    lock::{LockExclusiveGuard, LockSharedGuard, RwLock},
-};
+use crate::lock::{LockExclusiveGuard, LockSharedGuard, RwLock};
 use std::sync::atomic::{AtomicPtr, Ordering};
+use uniset::{AtomicBitSet, BitSet};
 
 /// A wake set which allows us to immutably set an index.
 #[repr(C)]

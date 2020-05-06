@@ -151,8 +151,8 @@
 //! [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
 //! [futures-rs]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
 //! [futures crate]: https://docs.rs/futures/latest/futures
-//! [bit sets]: crate::bit_set::BitSet
-//! [BitSet]: crate::bit_set::BitSet
+//! [bit sets]: https://docs.rs/uniset/latest/uniset/struct.BitSet.html
+//! [BitSet]: https://docs.rs/uniset/latest/uniset/struct.BitSet.html
 
 use self::pin_slab::PinSlab;
 use self::wake_set::{LocalWakeSet, SharedWakeSet, WakeSet};
@@ -167,7 +167,6 @@ use std::{
     task::{Context, Poll},
 };
 
-pub mod bit_set;
 mod lock;
 pub mod pin_slab;
 mod wake_set;

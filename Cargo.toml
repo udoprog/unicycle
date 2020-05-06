@@ -17,28 +17,24 @@ categories = ["asynchronous", "algorithms"]
 [features]
 default = ["vec-safety"]
 parking-lot = ["lock_api", "parking_lot"]
-vec-safety = []
-test-op-count = []
+vec-safety = ["uniset/vec-safety"]
 
 [dependencies]
-futures-core = "0.3.1"
-parking_lot = {version = "0.10.0", optional = true}
-lock_api = {version = "0.3.3", optional = true}
+futures-core = "0.3.4"
+parking_lot = { version = "0.10.2", optional = true }
+lock_api = { version = "0.3.4", optional = true }
+uniset = "0.1.1"
 
 [dev-dependencies]
-tokio = {version = "0.2.11", features = ["full"]}
-tokio-util = {version = "0.2.0", features = ["codec"]}
+tokio = { version = "0.2.20", features = ["full"] }
+tokio-util = { version = "0.3.1", features = ["codec"] }
 checkers = "0.5.6"
 rand = "0.7.3"
-futures = "0.3.1"
-pin-utils = "0.1.0-alpha.4"
-hibitset = "0.6.2"
-criterion = "0.3"
+futures = "0.3.4"
+pin-utils = "0.1.0"
+hibitset = "0.6.3"
+criterion = "0.3.2"
 crossbeam = "0.7.3"
-
-[[bench]]
-name = "bitset"
-harness = false
 
 [[bench]]
 name = "unordered"
