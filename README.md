@@ -155,8 +155,6 @@ When this is done we yield once, then we start the cycle over again.
 [pin API]: https://doc.rust-lang.org/std/pin/index.html
 [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
 [PinSlab]: https://docs.rs/unicycle/latest/unicycle/pin_slab/struct.PinSlab.html
-[bit sets]: crate::bit_set::BitSet
-[BitSet]: https://docs.rs/unicycle/latest/unicycle/bit_set/struct.BitSet.html
 [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
 [FuturesUnordered]: https://docs.rs/unicycle/latest/unicycle/type.FuturesUnordered.html
 [StreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.StreamsUnordered.html
@@ -164,3 +162,5 @@ When this is done we yield once, then we start the cycle over again.
 [Unordered]: https://docs.rs/unicycle/latest/unicycle/struct.Unordered.html
 [futures-rs]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
 [futures crate]: https://docs.rs/futures/latest/futures
+[bit sets]: https://docs.rs/uniset/latest/uniset/struct.BitSet.html
+[BitSet]: https://docs.rs/uniset/latest/uniset/struct.BitSet.html
