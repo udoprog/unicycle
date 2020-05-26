@@ -295,41 +295,44 @@ impl Shared {
     /// swap out the wake sets.
     unsafe fn swap_active<'a>(
         &self,
-        cx: &mut Context<'_>,
+        cx: &Context<'_>,
         alternate: &'a mut *mut WakeSet,
         active_capacity: &mut usize,
     ) -> Poll<&'a mut LocalWakeSet> {
-        let wake_last = (**alternate).as_local_mut();
-        let capacity = wake_last.set.capacity();
+        let capacity = {
+            let alternate = (**alternate).as_local_mut();
+            let capacity = alternate.set.capacity();
 
-        if !wake_last.set.is_empty() && *active_capacity == capacity {
-            return Poll::Ready(wake_last);
-        }
+            if !alternate.set.is_empty() && *active_capacity == capacity {
+                return Poll::Ready(alternate);
+            }
 
-        // Note: We defer swapping the waker until we are here since we `wake_by_ref` when
-        // reading results, and if we don't have any child tasks (slab is empty) no one would
-        // benefit from an update anyways.
-        if !self.waker.swap(cx.waker()) {
-            return Poll::Pending;
-        }
+            // Note: We defer swapping the waker until we are here since we
+            // `wake_by_ref` when reading results, and if we don't have any
+            // child tasks (slab is empty) no one would benefit from an update
+            // anyways.
+            if !self.waker.swap(cx.waker()) {
+                return Poll::Pending;
+            }
 
-        // Note: at this point we should have had at least one element
-        // added to the slab.
-        debug_assert!(capacity > 0);
+            // Note: at this point we should have had at least one element
+            // added to the slab.
+            debug_assert!(capacity > 0);
+            capacity
+        };
 
-        // Safety: This drop here is important to avoid aliasing the pointer to
-        // the alternate, soon-to-be active set.
-        drop(wake_last);
-
-        // Unlock. At this position, if someone adds an element to the wake set they are
-        // also bound to call wake, which will cause us to wake up.
+        // Unlock. At this position, if someone adds an element to the wake set
+        // they are also bound to call wake, which will cause us to wake up.
         //
-        // There is a race going on between locking and unlocking, and it's beneficial
-        // for child tasks to observe the locked state of the wake set so they refetch
-        // the other set instead of having to wait until another wakeup.
+        // There is a race going on between locking and unlocking, and it's
+        // beneficial for child tasks to observe the locked state of the wake
+        // set so they refetch the other set instead of having to wait until
+        // another wakeup.
         (**alternate).unlock_exclusive();
 
         let next = mem::replace(alternate, ptr::null_mut());
+        debug_assert!(!next.is_null());
+
         *alternate = self.wake_set.swap(next);
 
         // Make sure no one else is using the alternate wake.
@@ -358,7 +361,17 @@ impl Shared {
     }
 }
 
-trait Sentinel {}
+mod private {
+    pub trait Sealed {}
+
+    impl Sealed for super::Futures {}
+    impl Sealed for super::Streams {}
+    impl Sealed for super::IndexedStreams {}
+}
+
+/// Trait implemented by sentinels for the [Unordered] type.
+pub trait Sentinel: self::private::Sealed {}
+
 /// Sentinel type for streams.
 ///
 /// [Unordered] instances which handle futures have the signature
@@ -415,7 +428,10 @@ impl Sentinel for IndexedStreams {}
 ///     println!("done!");
 /// }
 /// ```
-pub struct Unordered<F, S> {
+pub struct Unordered<F, S>
+where
+    S: Sentinel,
+{
     /// Slab of futures being polled.
     /// They need to be pinned on the heap, since the slab might grow to
     /// accomodate more futures.
@@ -437,10 +453,10 @@ pub struct Unordered<F, S> {
     _marker: marker::PhantomData<S>,
 }
 
-unsafe impl<T, S> Send for Unordered<T, S> {}
-unsafe impl<T, S> Sync for Unordered<T, S> {}
+unsafe impl<T, S> Send for Unordered<T, S> where S: Sentinel {}
+unsafe impl<T, S> Sync for Unordered<T, S> where S: Sentinel {}
 
-impl<T, S> Unpin for Unordered<T, S> {}
+impl<T, S> Unpin for Unordered<T, S> where S: Sentinel {}
 
 impl<T> FuturesUnordered<T> {
     /// Construct a new, empty [FuturesUnordered].
@@ -536,7 +552,10 @@ impl<F> IndexedStreamsUnordered<F> {
     }
 }
 
-impl<T, S> Unordered<T, S> {
+impl<T, S> Unordered<T, S>
+where
+    S: Sentinel,
+{
     #[inline(always)]
     fn new_internal() -> Self {
         Self {
@@ -650,7 +669,10 @@ impl<T> Default for Unordered<T, Futures> {
     }
 }
 
-impl<T, S> Drop for Unordered<T, S> {
+impl<T, S> Drop for Unordered<T, S>
+where
+    S: Sentinel,
+{
     fn drop(&mut self) {
         // Cancel all child futures in an attempt to prevent them from
         // attempting to call wake on the shared wake set.
@@ -865,7 +887,10 @@ where
     }
 }
 
-impl<T, S> iter::Extend<T> for Unordered<T, S> {
+impl<T, S> iter::Extend<T> for Unordered<T, S>
+where
+    S: Sentinel,
+{
     fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = T>,
