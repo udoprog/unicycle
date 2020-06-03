@@ -105,6 +105,12 @@ impl SharedWaker {
     /// Swap out the current waker, dropping the one that was previously in
     /// place.
     ///
+    /// Returns `true` if the waker was successfully swapped, or swapping is not
+    /// necessary.
+    ///
+    /// Otherwise returns `false` and calling `wake_by_ref`, indicating that we
+    /// want to try again.
+    ///
     /// # Safety
     ///
     /// Caller must ensure that they are the only one who will attempt to lock

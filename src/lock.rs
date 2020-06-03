@@ -4,6 +4,7 @@ mod internals {
     use std::sync::atomic::{AtomicIsize, Ordering};
 
     /// A simplified RwLock implementation which only supports voluntary locking.
+    #[repr(C)]
     pub struct RwLock {
         state: AtomicIsize,
     }

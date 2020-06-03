@@ -41,7 +41,7 @@ async fn test_spinning_futures_unordered() {
     })
     .await;
 
-    // Note: FuturesUnordered will spin a bit before yielding.
+    // Note: FuturesUnordered has spun a bit before yielding.
     assert!(count.get() > 1);
 }
 
@@ -64,5 +64,5 @@ async fn test_spinning_unordered() {
     .await;
 
     // Note: Unicycle guarantees each future is poll at most once.
-    assert_eq!(1, count.get());
+    assert_eq!(2, count.get());
 }
