@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use uniset::{AtomicBitSet, BitSet};
 
 /// A wake set which allows us to immutably set an index.
-#[repr(C)]
 pub(crate) struct WakeSet {
     set: AtomicBitSet,
     /// Read locks are held every time someone manipulates the underlying set,
@@ -16,13 +15,6 @@ pub(crate) struct WakeSet {
     /// still have a region of operation where we want to consider the wake set
     /// as exclusively owned.
     lock: RwLock,
-}
-
-/// The same wake set as above, but with a local bitset that can be mutated.
-#[repr(C)]
-pub(crate) struct LocalWakeSet {
-    pub(crate) set: BitSet,
-    _lock: RwLock,
 }
 
 impl WakeSet {
@@ -74,11 +66,8 @@ impl WakeSet {
     /// Caller must ensure that they have unique access to the atomic bit set by
     /// only using this while an exclusive lock is held through
     /// `lock_exclusive`.
-    pub(crate) fn as_local_mut(&mut self) -> &mut LocalWakeSet {
-        // Safety: `LocalWakeSet` has the same memory layout as `WakeSet`: It
-        // has the same memory layout as the other set, since `AtomicBitSet` is
-        // guaranteed to have the same layout as `BitSet`.
-        unsafe { &mut *(self as *mut _ as *mut LocalWakeSet) }
+    pub(crate) fn as_mut_set(&mut self) -> &mut BitSet {
+        self.set.as_local_mut()
     }
 }
 

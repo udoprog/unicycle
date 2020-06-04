@@ -31,7 +31,7 @@
 //! ## Examples
 //!
 //! ```rust
-//! use tokio::{stream::StreamExt as _, time};
+//! use tokio::time;
 //! use std::time::Duration;
 //! use unicycle::FuturesUnordered;
 //!
@@ -54,7 +54,7 @@
 //! [Unordered] types can be created from iterators:
 //!
 //! ```rust
-//! use tokio::{stream::StreamExt as _, time};
+//! use tokio::time;
 //! use std::time::Duration;
 //! use unicycle::FuturesUnordered;
 //!
@@ -155,8 +155,9 @@
 //! [BitSet]: https://docs.rs/uniset/latest/uniset/struct.BitSet.html
 
 use self::pin_slab::PinSlab;
-use self::wake_set::{LocalWakeSet, SharedWakeSet, WakeSet};
+use self::wake_set::{SharedWakeSet, WakeSet};
 use self::waker::SharedWaker;
+#[cfg(feature = "futures-rs")]
 use futures_core::Stream;
 use std::{
     future::Future,
@@ -166,18 +167,29 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use uniset::BitSet;
 
 mod lock;
 pub mod pin_slab;
 mod wake_set;
 mod waker;
 
+/// Our very own homebade `ready!` impl.
+macro_rules! ready {
+    ($expr:expr) => {
+        match $expr {
+            Poll::Ready(value) => value,
+            Poll::Pending => return Poll::Pending,
+        }
+    };
+}
+
 /// A container for an unordered collection of [Future]s.
 ///
 /// # Examples
 ///
 /// ```rust,no_run
-/// use tokio::{stream::StreamExt as _, time};
+/// use tokio::time;
 /// use std::time::Duration;
 ///
 /// #[tokio::main]
@@ -196,77 +208,6 @@ mod waker;
 /// }
 /// ```
 pub type FuturesUnordered<T> = Unordered<T, Futures>;
-
-/// A container for an unordered collection of [Stream]s.
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use tokio::{net::TcpListener, stream::StreamExt as _, time};
-/// use tokio_util::codec::{Framed, LengthDelimitedCodec};
-/// use std::error::Error;
-///
-/// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn Error>> {
-///     let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
-///     let mut clients = unicycle::StreamsUnordered::new();
-///
-///     loop {
-///         tokio::select! {
-///             result = listener.accept() => {
-///                 let (stream, _) = result?;
-///                 clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
-///             },
-///             Some(frame) = clients.next() => {
-///                 println!("received frame: {:?}", frame);
-///             }
-///         }
-///     }
-/// }
-/// ```
-pub type StreamsUnordered<T> = Unordered<T, Streams>;
-
-/// A container for an unordered collection of [Stream]s, which also yields the
-/// index that produced the next item.
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use tokio::{net::TcpListener, stream::StreamExt as _, time};
-/// use tokio_util::codec::{Framed, LengthDelimitedCodec};
-/// use std::error::Error;
-///
-/// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn Error>> {
-///     let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
-///     let mut clients = unicycle::IndexedStreamsUnordered::new();
-///
-///     loop {
-///         tokio::select! {
-///             result = listener.accept() => {
-///                 let (stream, _) = result?;
-///                 clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
-///             },
-///             Some((index, frame)) = clients.next() => {
-///                 match frame {
-///                     Some(frame) => println!("{}: received frame: {:?}", index, frame),
-///                     None => println!("{}: client disconnected", index),
-///                 }
-///             }
-///         }
-///     }
-/// }
-/// ```
-pub type IndexedStreamsUnordered<T> = Unordered<T, IndexedStreams>;
-
-macro_rules! ready {
-    ($expr:expr) => {
-        match $expr {
-            Poll::Ready(value) => value,
-            Poll::Pending => return Poll::Pending,
-        }
-    };
-}
 
 /// Data that is shared across all sub-tasks.
 struct Shared {
@@ -293,34 +234,43 @@ impl Shared {
     ///
     /// Caller must be assured that they are the only one who is attempting to
     /// swap out the wake sets.
-    unsafe fn swap_active<'a>(
+    unsafe fn poll_swap_active<'a>(
         &self,
         cx: &Context<'_>,
-        alternate: &'a mut *mut WakeSet,
-        active_capacity: &mut usize,
-    ) -> Poll<&'a mut LocalWakeSet> {
-        let capacity = {
-            let alternate = (**alternate).as_local_mut();
-            let capacity = alternate.set.capacity();
+        alternate: &mut *mut WakeSet,
+    ) -> Poll<(bool, &'a mut BitSet)> {
+        let non_empty = {
+            let alternate = (**alternate).as_mut_set();
+            let non_empty = !alternate.is_empty();
 
-            if !alternate.set.is_empty() && *active_capacity == capacity {
-                return Poll::Ready(alternate);
+            // We always force a swap if the capacity has changed, because then
+            // we expect subtasks to poll the swapped in set since they were
+            // newly added.
+            if non_empty {
+                return Poll::Ready((true, alternate));
             }
 
-            // Note: We defer swapping the waker until we are here since we
-            // `wake_by_ref` when reading results, and if we don't have any
-            // child tasks (slab is empty) no one would benefit from an update
-            // anyways.
+            // Note: We must swap the waker before we swap the set.
             if !self.waker.swap(cx.waker()) {
                 return Poll::Pending;
             }
 
-            // Note: at this point we should have had at least one element
-            // added to the slab.
-            debug_assert!(capacity > 0);
-            capacity
+            non_empty
         };
 
+        let wake_set = self.swap_active(alternate);
+        Poll::Ready((non_empty, wake_set))
+    }
+
+    /// Perform the actual swap of the active sets.
+    /// This is safe, because we perform the appropriate locking while swapping
+    /// the sets.
+    ///
+    /// # Safety
+    ///
+    /// We must ensure that we have unique access to the alternate set being
+    /// swapped.
+    unsafe fn swap_active<'a>(&self, alternate: &mut *mut WakeSet) -> &'a mut BitSet {
         // Unlock. At this position, if someone adds an element to the wake set
         // they are also bound to call wake, which will cause us to wake up.
         //
@@ -350,14 +300,7 @@ impl Shared {
 
         // Safety: While this is live we must _not_ mess with
         // `alternate` in any way.
-        let wake_set = (**alternate).as_local_mut();
-
-        // Make sure the capacity of the active set matches the now alternate
-        // set.
-        wake_set.set.reserve(capacity);
-        *active_capacity = wake_set.set.capacity();
-
-        Poll::Ready(wake_set)
+        (**alternate).as_mut_set()
     }
 }
 
@@ -365,21 +308,14 @@ mod private {
     pub trait Sealed {}
 
     impl Sealed for super::Futures {}
+    #[cfg(feature = "futures-rs")]
     impl Sealed for super::Streams {}
+    #[cfg(feature = "futures-rs")]
     impl Sealed for super::IndexedStreams {}
 }
 
 /// Trait implemented by sentinels for the [Unordered] type.
 pub trait Sentinel: self::private::Sealed {}
-
-/// Sentinel type for streams.
-///
-/// [Unordered] instances which handle futures have the signature
-/// `Unordered<T, Streams>`, since it allows for a different implementation of
-/// [Stream].
-pub struct Streams(());
-
-impl Sentinel for Streams {}
 
 /// Sentinel type for futures.
 ///
@@ -389,16 +325,6 @@ impl Sentinel for Streams {}
 pub struct Futures(());
 
 impl Sentinel for Futures {}
-
-/// Sentinel type for streams which are indexed - for each value they yield,
-/// they also yield the task identifier associated with them.
-///
-/// [Unordered] instances which handle futures have the signature
-/// `Unordered<T, IndexedStreams>`, since it allows for a different
-/// implementation of [Stream].
-pub struct IndexedStreams(());
-
-impl Sentinel for IndexedStreams {}
 
 /// A container for an unordered collection of [Future]s or [Stream]s.
 ///
@@ -410,7 +336,7 @@ impl Sentinel for IndexedStreams {}
 /// # Examples
 ///
 /// ```rust,no_run
-/// use tokio::{stream::StreamExt as _, time};
+/// use tokio::time;
 /// use std::time::Duration;
 ///
 /// #[tokio::main]
@@ -443,12 +369,6 @@ where
     /// Alternate wake set, used for growing the existing set when futures are
     /// added. This is then swapped out with the active set to receive polls.
     alternate: *mut WakeSet,
-    /// The capacity of the active bit set.
-    ///
-    /// This is used to determine if we need to swap out the active set in case
-    /// the alternate has grown. We store it locally instead of accessing it
-    /// through `shared` since it's a hot field to access.
-    active_capacity: usize,
     /// Marker for the sentinel.
     _marker: marker::PhantomData<S>,
 }
@@ -457,6 +377,30 @@ unsafe impl<T, S> Send for Unordered<T, S> where S: Sentinel {}
 unsafe impl<T, S> Sync for Unordered<T, S> where S: Sentinel {}
 
 impl<T, S> Unpin for Unordered<T, S> where S: Sentinel {}
+
+impl<T, S> Unordered<T, S>
+where
+    S: Sentinel,
+    Self: PollNext,
+{
+    /// Creates a future that resolves to the next item in the unordered set.
+    pub async fn next(&mut self) -> Option<<Self as PollNext>::Item> {
+        return Next(self).await;
+
+        struct Next<'a, T>(&'a mut T);
+
+        impl<T> Future for Next<'_, T>
+        where
+            T: Unpin + PollNext,
+        {
+            type Output = Option<T::Item>;
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                Pin::new(&mut *self.0).poll_next(cx)
+            }
+        }
+    }
+}
 
 impl<T> FuturesUnordered<T> {
     /// Construct a new, empty [FuturesUnordered].
@@ -476,79 +420,79 @@ impl<T> FuturesUnordered<T> {
     }
 }
 
-impl<T> StreamsUnordered<T> {
-    /// Construct a new, empty [StreamsUnordered].
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use unicycle::StreamsUnordered;
-    /// use tokio::stream::{StreamExt as _, iter};
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let mut streams = StreamsUnordered::new();
-    ///     assert!(streams.is_empty());
-    ///
-    ///     streams.push(iter(vec![1, 2, 3, 4]));
-    ///     streams.push(iter(vec![5, 6, 7, 8]));
-    ///
-    ///     let mut received = Vec::new();
-    ///
-    ///     while let Some(value) = streams.next().await {
-    ///         received.push(value);
-    ///     }
-    ///
-    ///     assert_eq!(vec![1, 5, 2, 6, 3, 7, 4, 8], received);
-    /// }
-    /// ```
-    pub fn new() -> Self {
-        Self::new_internal()
-    }
+/// Trait for providing a poll_next implementation.
+///
+/// This is like the lightweight unicycle version of the Stream trait, but we
+/// provide it here so we can shim in our own generic [`next`] implementation.
+///
+/// [`next`]: Unordered::next
+pub trait PollNext {
+    /// The output of the poll.
+    type Item;
+
+    /// Poll the stream for the next item.
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>>;
 }
 
-impl<F> IndexedStreamsUnordered<F> {
-    /// Construct a new, empty [IndexedStreamsUnordered].
-    ///
-    /// This is the same as [StreamsUnordered], except that it yields the index
-    /// of the stream who'se value was just yielded, alongside the yielded
-    /// value.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use unicycle::IndexedStreamsUnordered;
-    /// use tokio::stream::{StreamExt as _, iter};
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let mut streams = IndexedStreamsUnordered::new();
-    ///     assert!(streams.is_empty());
-    ///
-    ///     streams.push(iter(vec![1, 2]));
-    ///     streams.push(iter(vec![5, 6]));
-    ///
-    ///     let mut received = Vec::new();
-    ///
-    ///     while let Some(value) = streams.next().await {
-    ///         received.push(value);
-    ///     }
-    ///
-    ///     assert_eq!(
-    ///         vec![
-    ///             (0, Some(1)),
-    ///             (1, Some(5)),
-    ///             (0, Some(2)),
-    ///             (1, Some(6)),
-    ///             (0, None),
-    ///             (1, None)
-    ///         ],
-    ///         received
-    ///     );
-    /// }
-    /// ```
-    pub fn new() -> Self {
-        Self::new_internal()
+impl<T> PollNext for FuturesUnordered<T>
+where
+    T: Future,
+{
+    type Item = T::Output;
+
+    /// Internal poll function for `FuturesUnordered<T>`.
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T::Output>> {
+        let Self {
+            ref mut slab,
+            ref shared,
+            ref mut alternate,
+            ..
+        } = *self.as_mut();
+
+        if slab.is_empty() {
+            // Nothing to poll, nothing to add. End the stream since we don't have work to do.
+            return Poll::Ready(None);
+        }
+
+        // Safety: We have exclusive access to Unordered, which is the only
+        // implementation that is trying to swap the wake sets.
+        let (non_empty, wake_last) = ready!(unsafe { shared.poll_swap_active(cx, alternate) });
+
+        for index in wake_last.drain() {
+            // NB: Since we defer pollables a little, a future might
+            // have been polled and subsequently removed from the slab.
+            // So we don't treat this as an error here.
+            // If on the other hand it was removed _and_ re-added, we have
+            // a case of a spurious poll. Luckily, that doesn't bother a
+            // future much.
+            let fut = match slab.get_pin_mut(index) {
+                Some(fut) => fut,
+                None => continue,
+            };
+
+            // Construct a new lightweight waker only capable of waking by
+            // reference, with referential access to `shared`.
+            let result = self::waker::poll_with_ref(shared, index, move |cx| fut.poll(cx));
+
+            if let Poll::Ready(result) = result {
+                let removed = slab.remove(index);
+                debug_assert!(removed);
+                cx.waker().wake_by_ref();
+                return Poll::Ready(Some(result));
+            }
+        }
+
+        if slab.is_empty() {
+            return Poll::Ready(None);
+        }
+
+        // We need to wake again to take care of the alternate set that was
+        // swapped in.
+        if non_empty {
+            cx.waker().wake_by_ref();
+        }
+
+        Poll::Pending
     }
 }
 
@@ -562,7 +506,6 @@ where
             slab: PinSlab::new(),
             shared: Arc::new(Shared::new()),
             alternate: Box::into_raw(Box::new(WakeSet::locked())),
-            active_capacity: 0,
             _marker: marker::PhantomData,
         }
     }
@@ -601,9 +544,33 @@ where
     /// ```
     pub fn push(&mut self, future: T) -> usize {
         let index = self.slab.insert(future);
-        // Safety: At this point we know we have exclusive access to the set.
-        let alternate = unsafe { (*self.alternate).as_local_mut() };
-        alternate.set.set(index);
+
+        let (old, new) = {
+            // Safety: At this point we know we have exclusive access to the set.
+            let set = unsafe { (*self.alternate).as_mut_set() };
+            let old = set.capacity();
+            set.set(index);
+            let new = set.capacity();
+            (old, new)
+        };
+
+        // Fast Path: Did not grow the alternate set, so no need to grow the
+        // active set either.
+        if new <= old {
+            return index;
+        }
+
+        // Slow Path: Swap out the active set and grow it to accomodate the same
+        // number of elements as the now alternate set was grown to.
+        // This works out, because if it's non-empty, the next time we poll
+        // the unordered set it will be processed. It it's empty, it will be
+        // swapped out with the active set which now contains the newly added
+        // futures.
+        // Safety: We have unique access to the alternate set being modified.
+        unsafe {
+            self.shared.swap_active(&mut self.alternate).reserve(new);
+        }
+
         index
     }
 
@@ -694,199 +661,6 @@ where
     }
 }
 
-impl<T> Stream for Unordered<T, Futures>
-where
-    T: Future,
-{
-    type Item = T::Output;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let Self {
-            ref mut slab,
-            ref shared,
-            ref mut alternate,
-            ref mut active_capacity,
-            ..
-        } = *self.as_mut();
-
-        if slab.is_empty() {
-            // Nothing to poll, nothing to add. End the stream since we don't have work to do.
-            return Poll::Ready(None);
-        }
-
-        // Safety: We have exclusive access to Unordered, which is the only
-        // implementation that is trying to swap the wake sets.
-        let wake_last = ready!(unsafe { shared.swap_active(cx, alternate, active_capacity) });
-
-        for index in wake_last.set.drain() {
-            // NB: Since we defer pollables a little, a future might
-            // have been polled and subsequently removed from the slab.
-            // So we don't treat this as an error here.
-            // If on the other hand it was removed _and_ re-added, we have
-            // a case of a spurious poll. Luckily, that doesn't bother a
-            // future much.
-            let fut = match slab.get_pin_mut(index) {
-                Some(fut) => fut,
-                None => continue,
-            };
-
-            // Construct a new lightweight waker only capable of waking by
-            // reference, with referential access to `shared`.
-            let result = self::waker::poll_with_ref(shared, index, move |cx| fut.poll(cx));
-
-            if let Poll::Ready(result) = result {
-                let removed = slab.remove(index);
-                debug_assert!(removed);
-                cx.waker().wake_by_ref();
-                return Poll::Ready(Some(result));
-            }
-        }
-
-        if slab.is_empty() {
-            return Poll::Ready(None);
-        }
-
-        // We have successfully polled the last snapshot.
-        // Yield and make sure that we are polled again.
-        cx.waker().wake_by_ref();
-        Poll::Pending
-    }
-}
-
-impl<T> Stream for Unordered<T, Streams>
-where
-    T: Stream,
-{
-    type Item = T::Item;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let Self {
-            ref mut slab,
-            ref shared,
-            ref mut alternate,
-            ref mut active_capacity,
-            ..
-        } = *self.as_mut();
-
-        if slab.is_empty() {
-            // Nothing to poll, nothing to add. End the stream since we don't have work to do.
-            return Poll::Ready(None);
-        }
-
-        // Safety: We have exclusive access to Unordered, which is the only
-        // implementation that is trying to swap the wake sets.
-        let wake_last = ready!(unsafe { shared.swap_active(cx, alternate, active_capacity) });
-
-        for index in wake_last.set.drain() {
-            // NB: Since we defer pollables a little, a future might
-            // have been polled and subsequently removed from the slab.
-            // So we don't treat this as an error here.
-            // If on the other hand it was removed _and_ re-added, we have
-            // a case of a spurious poll. Luckily, that doesn't bother a
-            // future much.
-            let stream = match slab.get_pin_mut(index) {
-                Some(stream) => stream,
-                None => continue,
-            };
-
-            // Construct a new lightweight waker only capable of waking by
-            // reference, with referential access to `shared`.
-            let result = self::waker::poll_with_ref(shared, index, move |cx| stream.poll_next(cx));
-
-            if let Poll::Ready(result) = result {
-                match result {
-                    Some(value) => {
-                        cx.waker().wake_by_ref();
-                        shared.wake_set.wake(index);
-                        return Poll::Ready(Some(value));
-                    }
-                    None => {
-                        let removed = slab.remove(index);
-                        debug_assert!(removed);
-                    }
-                }
-            }
-        }
-
-        // We have successfully polled the last snapshot.
-        // Yield and make sure that we are polled again.
-        if slab.is_empty() {
-            return Poll::Ready(None);
-        }
-
-        cx.waker().wake_by_ref();
-        Poll::Pending
-    }
-}
-
-impl<T> Stream for IndexedStreamsUnordered<T>
-where
-    T: Stream,
-{
-    type Item = (usize, Option<T::Item>);
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let Self {
-            ref mut slab,
-            ref shared,
-            ref mut alternate,
-            ref mut active_capacity,
-            ..
-        } = *self.as_mut();
-
-        if slab.is_empty() {
-            // Nothing to poll, nothing to add. End the stream since we don't have work to do.
-            return Poll::Ready(None);
-        }
-
-        // Safety: We have exclusive access to Unordered, which is the only
-        // implementation that is trying to swap the wake sets.
-        let wake_last = ready!(unsafe { shared.swap_active(cx, alternate, active_capacity) });
-
-        for index in wake_last.set.drain() {
-            // NB: Since we defer pollables a little, a future might
-            // have been polled and subsequently removed from the slab.
-            // So we don't treat this as an error here.
-            // If on the other hand it was removed _and_ re-added, we have
-            // a case of a spurious poll. Luckily, that doesn't bother a
-            // future much.
-            let stream = match slab.get_pin_mut(index) {
-                Some(stream) => stream,
-                None => continue,
-            };
-
-            // Construct a new lightweight waker only capable of waking by
-            // reference, with referential access to `shared`.
-            let result = self::waker::poll_with_ref(shared, index, move |cx| stream.poll_next(cx));
-
-            if let Poll::Ready(result) = result {
-                match result {
-                    Some(value) => {
-                        cx.waker().wake_by_ref();
-                        shared.wake_set.wake(index);
-                        return Poll::Ready(Some((index, Some(value))));
-                    }
-                    None => {
-                        cx.waker().wake_by_ref();
-                        let removed = slab.remove(index);
-                        debug_assert!(removed);
-                        return Poll::Ready(Some((index, None)));
-                    }
-                }
-            }
-        }
-
-        // We have successfully polled the last snapshot.
-        // Yield and make sure that we are polled again.
-        if slab.is_empty() {
-            return Poll::Ready(None);
-        }
-
-        cx.waker().wake_by_ref();
-        Poll::Pending
-    }
-}
-
 impl<T, S> iter::Extend<T> for Unordered<T, S>
 where
     S: Sentinel,
@@ -913,14 +687,338 @@ where
     }
 }
 
-impl<T> iter::FromIterator<T> for StreamsUnordered<T>
-where
-    T: Stream,
-{
-    #[inline]
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let mut streams = StreamsUnordered::new();
-        streams.extend(iter);
-        streams
+macro_rules! cfg_futures_rs {
+    ($($item:item)*) => {
+        $(
+            #[cfg(feature = "futures-rs")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "futures-rs")))]
+            $item
+        )*
+    }
+}
+
+cfg_futures_rs! {
+    /// Sentinel type for streams.
+    ///
+    /// [Unordered] instances which handle futures have the signature
+    /// `Unordered<T, Streams>`, since it allows for a different implementation of
+    /// [Stream].
+    pub struct Streams(());
+
+    impl Sentinel for Streams {}
+
+    /// Sentinel type for streams which are indexed - for each value they yield,
+    /// they also yield the task identifier associated with them.
+    ///
+    /// [Unordered] instances which handle futures have the signature
+    /// `Unordered<T, IndexedStreams>`, since it allows for a different
+    /// implementation of [Stream].
+    pub struct IndexedStreams(());
+
+    impl Sentinel for IndexedStreams {}
+
+    /// A container for an unordered collection of [Stream]s.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use tokio::{net::TcpListener, time};
+    /// use tokio_util::codec::{Framed, LengthDelimitedCodec};
+    /// use std::error::Error;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn Error>> {
+    ///     let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
+    ///     let mut clients = unicycle::StreamsUnordered::new();
+    ///
+    ///     loop {
+    ///         tokio::select! {
+    ///             result = listener.accept() => {
+    ///                 let (stream, _) = result?;
+    ///                 clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
+    ///             },
+    ///             Some(frame) = clients.next() => {
+    ///                 println!("received frame: {:?}", frame);
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub type StreamsUnordered<T> = Unordered<T, Streams>;
+
+    /// A container for an unordered collection of [Stream]s, which also yields the
+    /// index that produced the next item.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use tokio::{net::TcpListener, time};
+    /// use tokio_util::codec::{Framed, LengthDelimitedCodec};
+    /// use std::error::Error;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn Error>> {
+    ///     let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
+    ///     let mut clients = unicycle::IndexedStreamsUnordered::new();
+    ///
+    ///     loop {
+    ///         tokio::select! {
+    ///             result = listener.accept() => {
+    ///                 let (stream, _) = result?;
+    ///                 clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
+    ///             },
+    ///             Some((index, frame)) = clients.next() => {
+    ///                 match frame {
+    ///                     Some(frame) => println!("{}: received frame: {:?}", index, frame),
+    ///                     None => println!("{}: client disconnected", index),
+    ///                 }
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub type IndexedStreamsUnordered<T> = Unordered<T, IndexedStreams>;
+
+    impl<T> StreamsUnordered<T> {
+        /// Construct a new, empty [StreamsUnordered].
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use unicycle::StreamsUnordered;
+        /// use tokio::stream::iter;
+        ///
+        /// #[tokio::main]
+        /// async fn main() {
+        ///     let mut streams = StreamsUnordered::new();
+        ///     assert!(streams.is_empty());
+        ///
+        ///     streams.push(iter(vec![1, 2, 3, 4]));
+        ///     streams.push(iter(vec![5, 6, 7, 8]));
+        ///
+        ///     let mut received = Vec::new();
+        ///
+        ///     while let Some(value) = streams.next().await {
+        ///         received.push(value);
+        ///     }
+        ///
+        ///     assert_eq!(vec![5, 1, 6, 2, 7, 3, 8, 4], received);
+        /// }
+        /// ```
+        pub fn new() -> Self {
+            Self::new_internal()
+        }
+    }
+
+    impl<F> IndexedStreamsUnordered<F> {
+        /// Construct a new, empty [IndexedStreamsUnordered].
+        ///
+        /// This is the same as [StreamsUnordered], except that it yields the index
+        /// of the stream who'se value was just yielded, alongside the yielded
+        /// value.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use unicycle::IndexedStreamsUnordered;
+        /// use tokio::stream::iter;
+        ///
+        /// #[tokio::main]
+        /// async fn main() {
+        ///     let mut streams = IndexedStreamsUnordered::new();
+        ///     assert!(streams.is_empty());
+        ///
+        ///     streams.push(iter(vec![1, 2]));
+        ///     streams.push(iter(vec![5, 6]));
+        ///
+        ///     let mut received = Vec::new();
+        ///
+        ///     while let Some(value) = streams.next().await {
+        ///         received.push(value);
+        ///     }
+        ///
+        ///     assert_eq!(
+        ///         vec![
+        ///             (1, Some(5)),
+        ///             (0, Some(1)),
+        ///             (1, Some(6)),
+        ///             (0, Some(2)),
+        ///             (1, None),
+        ///             (0, None)
+        ///         ],
+        ///         received
+        ///     );
+        /// }
+        /// ```
+        pub fn new() -> Self {
+            Self::new_internal()
+        }
+    }
+
+    /// Provide `Stream` implementation through `PollNext`.
+    impl<T, S> Stream for Unordered<T, S>
+    where
+        S: Sentinel,
+        Self: PollNext,
+    {
+        type Item = <Self as PollNext>::Item;
+
+        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            <Self as PollNext>::poll_next(self, cx)
+        }
+    }
+
+    impl<T> PollNext for StreamsUnordered<T>
+    where
+        T: Stream,
+    {
+        type Item = T::Item;
+
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let Self {
+                ref mut slab,
+                ref shared,
+                ref mut alternate,
+                ..
+            } = *self.as_mut();
+
+            if slab.is_empty() {
+                // Nothing to poll, nothing to add. End the stream since we don't have work to do.
+                return Poll::Ready(None);
+            }
+
+            // Safety: We have exclusive access to Unordered, which is the only
+            // implementation that is trying to swap the wake sets.
+            let (non_empty, wake_last) = ready!(unsafe { shared.poll_swap_active(cx, alternate) });
+
+            for index in wake_last.drain() {
+                // NB: Since we defer pollables a little, a future might
+                // have been polled and subsequently removed from the slab.
+                // So we don't treat this as an error here.
+                // If on the other hand it was removed _and_ re-added, we have
+                // a case of a spurious poll. Luckily, that doesn't bother a
+                // future much.
+                let stream = match slab.get_pin_mut(index) {
+                    Some(stream) => stream,
+                    None => continue,
+                };
+
+                // Construct a new lightweight waker only capable of waking by
+                // reference, with referential access to `shared`.
+                let result = self::waker::poll_with_ref(shared, index, move |cx| stream.poll_next(cx));
+
+                if let Poll::Ready(result) = result {
+                    match result {
+                        Some(value) => {
+                            cx.waker().wake_by_ref();
+                            shared.wake_set.wake(index);
+                            return Poll::Ready(Some(value));
+                        }
+                        None => {
+                            let removed = slab.remove(index);
+                            debug_assert!(removed);
+                        }
+                    }
+                }
+            }
+
+            // We have successfully polled the last snapshot.
+            // Yield and make sure that we are polled again.
+            if slab.is_empty() {
+                return Poll::Ready(None);
+            }
+
+            // We need to wake again to take care of the alternate set that was
+            // swapped in.
+            if non_empty {
+                cx.waker().wake_by_ref();
+            }
+
+            Poll::Pending
+        }
+    }
+
+    impl<T> PollNext for IndexedStreamsUnordered<T>
+    where
+        T: Stream,
+    {
+        type Item = (usize, Option<T::Item>);
+
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let Self {
+                ref mut slab,
+                ref shared,
+                ref mut alternate,
+                ..
+            } = *self.as_mut();
+
+            if slab.is_empty() {
+                // Nothing to poll, nothing to add. End the stream since we don't have work to do.
+                return Poll::Ready(None);
+            }
+
+            // Safety: We have exclusive access to Unordered, which is the only
+            // implementation that is trying to swap the wake sets.
+            let (non_empty, wake_last) = ready!(unsafe { shared.poll_swap_active(cx, alternate) });
+
+            for index in wake_last.drain() {
+                // NB: Since we defer pollables a little, a future might
+                // have been polled and subsequently removed from the slab.
+                // So we don't treat this as an error here.
+                // If on the other hand it was removed _and_ re-added, we have
+                // a case of a spurious poll. Luckily, that doesn't bother a
+                // future much.
+                let stream = match slab.get_pin_mut(index) {
+                    Some(stream) => stream,
+                    None => continue,
+                };
+
+                // Construct a new lightweight waker only capable of waking by
+                // reference, with referential access to `shared`.
+                let result = self::waker::poll_with_ref(shared, index, move |cx| stream.poll_next(cx));
+
+                if let Poll::Ready(result) = result {
+                    match result {
+                        Some(value) => {
+                            cx.waker().wake_by_ref();
+                            shared.wake_set.wake(index);
+                            return Poll::Ready(Some((index, Some(value))));
+                        }
+                        None => {
+                            cx.waker().wake_by_ref();
+                            let removed = slab.remove(index);
+                            debug_assert!(removed);
+                            return Poll::Ready(Some((index, None)));
+                        }
+                    }
+                }
+            }
+
+            // We have successfully polled the last snapshot.
+            // Yield and make sure that we are polled again.
+            if slab.is_empty() {
+                return Poll::Ready(None);
+            }
+
+            // We need to wake again to take care of the alternate set that was
+            // swapped in.
+            if non_empty {
+                cx.waker().wake_by_ref();
+            }
+
+            Poll::Pending
+        }
+    }
+
+    impl<T> iter::FromIterator<T> for StreamsUnordered<T>
+    where
+        T: Stream,
+    {
+        #[inline]
+        fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+            let mut streams = StreamsUnordered::new();
+            streams.extend(iter);
+            streams
+        }
     }
 }

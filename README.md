@@ -37,7 +37,7 @@ should consider putting it in production.
 ## Examples
 
 ```rust
-use tokio::{stream::StreamExt as _, time};
+use tokio::time;
 use std::time::Duration;
 use unicycle::FuturesUnordered;
 
@@ -60,7 +60,7 @@ async fn main() {
 [Unordered] types can be created from iterators:
 
 ```rust
-use tokio::{stream::StreamExt as _, time};
+use tokio::time;
 use std::time::Duration;
 use unicycle::FuturesUnordered;
 

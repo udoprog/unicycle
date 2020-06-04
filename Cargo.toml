@@ -15,22 +15,22 @@ keywords = ["async", "futures", "future"]
 categories = ["asynchronous", "algorithms"]
 
 [features]
-default = ["vec-safety"]
+default = ["futures-rs", "parking-lot"]
 parking-lot = ["lock_api", "parking_lot"]
-vec-safety = ["uniset/vec-safety"]
+futures-rs = ["futures-core"]
 
 [dependencies]
-futures-core = "0.3.4"
+futures-core = { version = "0.3.5", optional = true }
 parking_lot = { version = "0.10.2", optional = true }
 lock_api = { version = "0.3.4", optional = true }
-uniset = "0.1.1"
+uniset = { version = "0.2.0", features = ["vec-safety"] }
 
 [dev-dependencies]
 tokio = { version = "0.2.20", features = ["full"] }
 tokio-util = { version = "0.3.1", features = ["codec"] }
 checkers = "0.5.6"
 rand = "0.7.3"
-futures = "0.3.4"
+futures = "0.3.5"
 pin-utils = "0.1.0"
 hibitset = "0.6.3"
 criterion = "0.3.2"
