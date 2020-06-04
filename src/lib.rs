@@ -1,5 +1,9 @@
+#![doc(html_root_url = "https://docs.rs/unicycle/0.6.2")]
 #![deny(missing_docs)]
 #![allow(clippy::needless_doctest_main)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(intra_doc_link_resolution_failure)]
+
 //! A scheduler for driving a large number of futures.
 //!
 //! Unicycle provides a collection of [Unordered] types:
@@ -21,8 +25,12 @@
 //! ## Features
 //!
 //! * `parking-lot` - To enable locking using the [parking_lot] crate (default).
+//! * `futures-rs` - Enable the used of the Stream type from [futures-rs].
+//!   This is required to get access to [StreamsUnordered] and
+//!   [IndexedStreamsUnordered] since these wrap over [futures-rs] types. (default)
 //!
 //! [parking_lot]: https://crates.io/crates/parking_lot
+//! [futures-rs]: https://crates.io/crates/futures
 //!
 //! ## Examples
 //!
@@ -380,6 +388,35 @@ where
     Self: PollNext,
 {
     /// Creates a future that resolves to the next item in the unordered set.
+    ///
+    /// Functions like [`StreamExt::next`] would from the [futures] crate, but
+    /// doesn't depend on the [Stream] trait.
+    ///
+    /// [`StreamExt::next`]: https://docs.rs/futures/latest/futures/stream/trait.StreamExt.html#method.next
+    /// [futures]: https://crates.io/crates/futures
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use tokio::time;
+    /// use std::time::Duration;
+    /// use unicycle::FuturesUnordered;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let mut futures = FuturesUnordered::new();
+    ///
+    ///     futures.push(time::delay_for(Duration::from_secs(2)));
+    ///     futures.push(time::delay_for(Duration::from_secs(3)));
+    ///     futures.push(time::delay_for(Duration::from_secs(1)));
+    ///
+    ///     while let Some(_) = futures.next().await {
+    ///         println!("tick");
+    ///     }
+    ///
+    ///     println!("done!");
+    /// }
+    /// ```
     pub async fn next(&mut self) -> Option<<Self as PollNext>::Item> {
         return Next(self).await;
 
@@ -416,17 +453,21 @@ impl<T> FuturesUnordered<T> {
     }
 }
 
-/// Trait for providing a poll_next implementation.
+/// Trait for providing a `poll_next` implementation for various unordered set
+/// types.
 ///
-/// This is like the lightweight unicycle version of the Stream trait, but we
-/// provide it here so we can shim in our own generic [`next`] implementation.
+/// This is like the lightweight unicycle version of the [Stream] trait, but we
+/// provide it here so we can shim in our own generic [next] implementation.
 ///
-/// [`next`]: Unordered::next
+/// [next]: Unordered::next
 pub trait PollNext {
     /// The output of the poll.
     type Item;
 
     /// Poll the stream for the next item.
+    ///
+    /// Once this completes with `Poll::Ready(None)`, no more items are expected
+    /// and it should not be polled again.
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>>;
 }
 

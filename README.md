@@ -27,8 +27,12 @@ should consider putting it in production.
 ## Features
 
 * `parking-lot` - To enable locking using the [parking_lot] crate (default).
+* `futures-rs` - Enable the used of the Stream type from [futures-rs].
+  This is required to get access to [StreamsUnordered] and
+  [IndexedStreamsUnordered] since these wrap over [futures-rs] types. (default)
 
 [parking_lot]: https://crates.io/crates/parking_lot
+[futures-rs]: https://crates.io/crates/futures
 
 ## Examples
 
