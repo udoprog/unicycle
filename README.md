@@ -26,12 +26,8 @@ should consider putting it in production.
 
 ## Features
 
-* `parking-lot` - To enable locking using the [parking_lot] crate (optional).
-* `vec-safety` - Avoid relying on the assumption that `&mut Vec<T>` can be
-  safely coerced to `&mut Vec<U>` if `T` and `U` have an identical memory
-  layouts (enabled by default, [issue #1]).
+* `parking-lot` - To enable locking using the [parking_lot] crate (default).
 
-[issue #1]: https://github.com/udoprog/unicycle/issues/1
 [parking_lot]: https://crates.io/crates/parking_lot
 
 ## Examples
