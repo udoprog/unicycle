@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/unicycle/0.6.2")]
+#![doc(html_root_url = "https://docs.rs/unicycle/0.6.3")]
 #![deny(missing_docs)]
 #![allow(clippy::needless_doctest_main)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
