@@ -162,7 +162,7 @@ use self::pin_slab::PinSlab;
 use self::wake_set::{SharedWakeSet, WakeSet};
 use self::waker::SharedWaker;
 #[cfg(feature = "futures-rs")]
-use futures_core::Stream;
+use futures_core::{FusedStream, Stream};
 use std::{
     future::Future,
     iter, marker, mem,
@@ -902,6 +902,12 @@ cfg_futures_rs! {
 
         fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             <Self as PollNext>::poll_next(self, cx)
+        }
+    }
+
+    impl<T, S> FusedStream for Unordered<T, S> where S: Sentinel, Self: PollNext, {
+        fn is_terminated(&self) -> bool {
+            self.is_empty()
         }
     }
 
