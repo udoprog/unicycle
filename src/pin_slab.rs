@@ -40,8 +40,8 @@ pub struct PinSlab<T> {
     next: usize,
 }
 
-unsafe impl<T> Send for PinSlab<T> {}
-unsafe impl<T> Sync for PinSlab<T> {}
+unsafe impl<T> Send for PinSlab<T> where T: Send {}
+unsafe impl<T> Sync for PinSlab<T> where T: Sync {}
 
 enum Entry<T> {
     // Each slot is pre-allocated with entries of `None`.
