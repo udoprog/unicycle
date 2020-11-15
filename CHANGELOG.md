@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0]
+
+### Fixed
+* Fixed soundness issue with `Send` and `Sync` bound ([#8]).
+
+[#8]: https://github.com/udoprog/unicycle/issues/8
+
 ## [0.6.3]
 
 ### Added

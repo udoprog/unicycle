@@ -2,7 +2,7 @@
 #![deny(missing_docs)]
 #![allow(clippy::needless_doctest_main)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![deny(intra_doc_link_resolution_failure)]
+#![deny(broken_intra_doc_links)]
 
 //! A scheduler for driving a large number of futures.
 //!
