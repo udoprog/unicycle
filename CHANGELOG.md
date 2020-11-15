@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0]
 
 ### Fixed
-* Fixed soundness issue with `Send` and `Sync` bound ([#8]).
+* Fixed soundness issue with `Send` and `Sync` bounds ([#8]).
 
 [#8]: https://github.com/udoprog/unicycle/issues/8
 
@@ -22,4 +22,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#7]: https://github.com/udoprog/unicycle/issues/7
 
 [0.6.3]: https://github.com/udoprog/genco/compare/0.6.2...0.6.3
-[Unreleased]: https://github.com/udoprog/genco/compare/0.6.3...master
+[0.7.0]: https://github.com/udoprog/genco/compare/0.6.3...0.7.0
+[Unreleased]: https://github.com/udoprog/genco/compare/0.7.0...master
