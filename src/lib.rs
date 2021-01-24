@@ -377,8 +377,8 @@ where
     _marker: marker::PhantomData<S>,
 }
 
-unsafe impl<T, S> Send for Unordered<T, S> where S: Send + Sentinel {}
-unsafe impl<T, S> Sync for Unordered<T, S> where S: Sync + Sentinel {}
+unsafe impl<T: Send, S> Send for Unordered<T, S> where S: Sentinel {}
+unsafe impl<T: Sync, S> Sync for Unordered<T, S> where S: Sentinel {}
 
 impl<T, S> Unpin for Unordered<T, S> where S: Sentinel {}
 
