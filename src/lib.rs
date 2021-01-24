@@ -358,14 +358,14 @@ impl Sentinel for Futures {}
 ///     println!("done!");
 /// }
 /// ```
-pub struct Unordered<F, S>
+pub struct Unordered<T, S>
 where
     S: Sentinel,
 {
     /// Slab of futures being polled.
     /// They need to be pinned on the heap, since the slab might grow to
     /// accomodate more futures.
-    slab: PinSlab<F>,
+    slab: PinSlab<T>,
     /// Shared parent waker.
     /// Includes the current wake target. Each time we poll, we swap back and
     /// forth between this and `alternate`.
@@ -862,7 +862,7 @@ cfg_futures_rs! {
         }
     }
 
-    impl<F> IndexedStreamsUnordered<F> {
+    impl<T> IndexedStreamsUnordered<T> {
         /// Construct a new, empty [IndexedStreamsUnordered].
         ///
         /// This is the same as [StreamsUnordered], except that it yields the index
