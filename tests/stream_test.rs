@@ -1,8 +1,8 @@
+use tokio_stream::iter;
+use unicycle::StreamsUnordered;
+
 #[tokio::test]
 async fn test_unicycle_streams() {
-    use tokio::stream::iter;
-    use unicycle::StreamsUnordered;
-
     let mut streams = StreamsUnordered::new();
     assert!(streams.is_empty());
 

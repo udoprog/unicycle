@@ -88,14 +88,14 @@ mod internals {
 
     impl RwLock {
         /// Construct a new lock that's in an unlocked state.
-        pub const fn new() -> Self {
+        pub(crate) const fn new() -> Self {
             Self {
                 state: parking_lot::RawRwLock::INIT,
             }
         }
 
         /// Construct a new lock that is already locked.
-        pub fn locked() -> Self {
+        pub(crate) fn locked() -> Self {
             let state = parking_lot::RawRwLock::INIT;
             state.lock_exclusive();
 
@@ -103,22 +103,32 @@ mod internals {
         }
 
         /// Try to lock exclusively.
-        pub fn try_lock_exclusive_immediate(&self) -> bool {
+        pub(crate) fn try_lock_exclusive_immediate(&self) -> bool {
             self.state.try_lock_exclusive()
         }
 
         /// Unlock shared access.
-        pub fn unlock_exclusive_immediate(&self) {
+        ///
+        /// # Safety
+        ///
+        /// This method may only be called if an exclusive lock is held in the
+        /// current context.
+        pub(crate) unsafe fn unlock_exclusive_immediate(&self) {
             self.state.unlock_exclusive()
         }
 
         /// Try to lock shared.
-        pub fn try_lock_shared_immediate(&self) -> bool {
+        pub(crate) fn try_lock_shared_immediate(&self) -> bool {
             self.state.try_lock_shared()
         }
 
         /// Unlock shared access.
-        pub fn unlock_shared_immediate(&self) {
+        ///
+        /// # Safety
+        ///
+        /// This method may only be called if a shared lock is held in the
+        /// current context.
+        pub(crate) unsafe fn unlock_shared_immediate(&self) {
             self.state.unlock_shared()
         }
     }
@@ -152,7 +162,8 @@ pub struct LockExclusiveGuard<'a> {
 
 impl Drop for LockExclusiveGuard<'_> {
     fn drop(&mut self) {
-        self.lock.unlock_exclusive_immediate()
+        // SAFETY: lock is held by the guard correctly.
+        unsafe { self.lock.unlock_exclusive_immediate() }
     }
 }
 
@@ -163,6 +174,7 @@ pub struct LockSharedGuard<'a> {
 
 impl Drop for LockSharedGuard<'_> {
     fn drop(&mut self) {
-        self.lock.unlock_shared_immediate()
+        // SAFETY: lock is held by the guard correctly.
+        unsafe { self.lock.unlock_shared_immediate() }
     }
 }

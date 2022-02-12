@@ -1,4 +1,5 @@
 use crate::lock::{LockExclusiveGuard, LockSharedGuard, RwLock};
+use std::hint;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use uniset::{AtomicBitSet, BitSet};
 
@@ -43,11 +44,11 @@ impl WakeSet {
 
     pub(crate) fn lock_exclusive(&self) {
         while !self.try_lock_exclusive() {
-            std::sync::atomic::spin_loop_hint();
+            hint::spin_loop();
         }
     }
 
-    pub(crate) fn unlock_exclusive(&self) {
+    pub(crate) unsafe fn unlock_exclusive(&self) {
         self.lock.unlock_exclusive_immediate();
     }
 
@@ -106,7 +107,7 @@ impl SharedWakeSet {
                 return guard;
             }
 
-            std::sync::atomic::spin_loop_hint();
+            hint::spin_loop();
         }
     }
 

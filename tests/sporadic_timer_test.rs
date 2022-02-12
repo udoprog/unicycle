@@ -1,14 +1,15 @@
 use std::time::{Duration, Instant};
-use tokio::{stream::StreamExt as _, time};
+use tokio::time;
+use tokio_stream::StreamExt;
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_unicycle_sporadic_timers() {
     use unicycle::FuturesUnordered;
 
     let mut futures = FuturesUnordered::new();
 
     for _ in 0..1_000 {
-        futures.push(time::delay_for(Duration::from_millis(
+        futures.push(time::sleep(Duration::from_millis(
             100 + (rand::random::<f32>() * 100f32) as u64,
         )));
     }
@@ -27,7 +28,7 @@ async fn test_futures_sporadic_timers() {
     let mut futures = FuturesUnordered::new();
 
     for _ in 0..1_000 {
-        futures.push(time::delay_for(Duration::from_millis(
+        futures.push(time::sleep(Duration::from_millis(
             100 + (rand::random::<f32>() * 100f32) as u64,
         )));
     }

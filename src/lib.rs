@@ -1,9 +1,8 @@
-#![doc(html_root_url = "https://docs.rs/unicycle/0.6.3")]
-#![deny(missing_docs)]
-#![allow(clippy::needless_doctest_main)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![deny(broken_intra_doc_links)]
-
+//! [<img alt="github" src="https://img.shields.io/badge/github-udoprog/unicycle?style=for-the-badge&logo=github" height="20">](https://github.com/udoprog/unicycle)
+//! [<img alt="crates.io" src="https://img.shields.io/crates/v/unicycle.svg?style=for-the-badge&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/unicycle)
+//! [<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-unicycle?style=for-the-badge&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K" height="20">](https://docs.rs/unicycle)
+//! [<img alt="build status" src="https://img.shields.io/github/workflow/status/udoprog/unicycle/CI/main?style=for-the-badge" height="20">](https://github.com/udoprog/unicycle/actions?query=branch%3Amain)
+//!
 //! A scheduler for driving a large number of futures.
 //!
 //! Unicycle provides a collection of [Unordered] types:
@@ -29,9 +28,6 @@
 //!   This is required to get access to [StreamsUnordered] and
 //!   [IndexedStreamsUnordered] since these wrap over [futures-rs] types. (default)
 //!
-//! [parking_lot]: https://crates.io/crates/parking_lot
-//! [futures-rs]: https://crates.io/crates/futures
-//!
 //! ## Examples
 //!
 //! ```rust
@@ -43,9 +39,9 @@
 //! async fn main() {
 //!     let mut futures = FuturesUnordered::new();
 //!
-//!     futures.push(time::delay_for(Duration::from_secs(2)));
-//!     futures.push(time::delay_for(Duration::from_secs(3)));
-//!     futures.push(time::delay_for(Duration::from_secs(1)));
+//!     futures.push(time::sleep(Duration::from_secs(2)));
+//!     futures.push(time::sleep(Duration::from_secs(3)));
+//!     futures.push(time::sleep(Duration::from_secs(1)));
 //!
 //!     while let Some(_) = futures.next().await {
 //!         println!("tick");
@@ -66,9 +62,9 @@
 //! async fn main() {
 //!     let mut futures = Vec::new();
 //!
-//!     futures.push(time::delay_for(Duration::from_secs(2)));
-//!     futures.push(time::delay_for(Duration::from_secs(3)));
-//!     futures.push(time::delay_for(Duration::from_secs(1)));
+//!     futures.push(time::sleep(Duration::from_secs(2)));
+//!     futures.push(time::sleep(Duration::from_secs(3)));
+//!     futures.push(time::sleep(Duration::from_secs(1)));
 //!
 //!     let mut futures = futures.into_iter().collect::<FuturesUnordered<_>>();
 //!
@@ -82,81 +78,80 @@
 //!
 //! ## Fairness
 //!
-//! You can think of abstractions like Unicycle as schedulers. They are provided a
-//! set of child tasks, and try to do their best to drive them to completion. In
-//! this regard, it's interesting to talk about _fairness_ in how the tasks are
-//! being driven.
+//! You can think of abstractions like Unicycle as schedulers. They are provided
+//! a set of child tasks, and try to do their best to drive them to completion.
+//! In this regard, it's interesting to talk about _fairness_ in how the tasks
+//! are being driven.
 //!
-//! The current implementation of [FuturesUnordered][futures-rs] maintains a queue
-//! of tasks interested in waking up. As a task is woken up, it's added to the head
-//! of this queue to signal its interest.
-//! When [FuturesUnordered][futures-rs] is being polled, it drains this queue in a
-//! loop and polls the associated task.
-//! This process has a side effect of tasks who aggressively signal interest in
-//! waking up will receive priority and be polled more frequently, since there is a
-//! higher chance that while the queue is being drained, their interest will be
-//! re-added to the queue.
-//! This can lead to instances where a small number of tasks can can cause the
-//! polling loop of [FuturesUnordered][futures-rs] to [spin abnormally].
-//! This issue was [reported by Jon Gjengset], and improved on by [limiting the
-//! amount FuturesUnordered is allowed to spin].
+//! The current implementation of [FuturesUnordered][futures-rs] maintains a
+//! queue of tasks interested in waking up. As a task is woken up it's added to
+//! the head of this queue to signal its interest in being polled. When
+//! [FuturesUnordered][futures-rs] works it drains this queue in a loop and
+//! polls the associated task. This process has a side effect where tasks who
+//! aggressively signal interest in waking up will receive priority and be
+//! polled more frequently. Since there is a higher chance that while the queue
+//! is being drained, their interest will be re-added at the head of the queue
+//! immeidately. This can lead to instances where a small number of tasks can
+//! can cause the polling loop of [FuturesUnordered][futures-rs] to [spin
+//! abnormally]. This issue was [reported by Jon Gjengset] and is improved on by
+//! [limiting the amount FuturesUnordered is allowed to spin].
 //!
-//! Unicycle addresses this by limiting how frequently a child task may be polled
-//! per _polling cycle_.
-//! This is done by tracking polling interest in two separate sets.
-//! Once we are polled, we swap out the active set, then take the swapped out set
-//! and use as a basis for what to poll in order, but we limit ourselves to only
-//! poll _once_ per child task.
-//! Additional wakeups are only registered in the swapped in set which will be
-//! polled the next cycle.
+//! Unicycle addresses this by limiting how frequently a child task may be
+//! polled per _polling cycle_. This is done by tracking polling interest in two
+//! separate sets. Once we are polled, we swap out the active set, then take the
+//! swapped out set and use as a basis for what to poll in order while limiting
+//! ourselves to only poll _once_ per child task. Additional wakeups are only
+//! registered in the swapped in set which will be polled the next cycle.
 //!
 //! This way we hope to achieve a higher degree of fairness, never favoring the
 //! behavior of one particular task.
 //!
-//! [spin abnormally]: https://github.com/udoprog/unicycle/blob/master/tests/spinning_futures_unordered.rs
-//! [limiting the amount FuturesUnordered is allowed to spin]: https://github.com/rust-lang/futures-rs/pull/2049
-//! [reported by Jon Gjengset]: https://github.com/rust-lang/futures-rs/issues/2047
-//!
 //! ## Architecture
 //!
-//! The [Unordered] type stores all futures being polled in a [PinSlab] (Inspired by
-//! the [slab] crate).
-//! A slab is capable of utomatically reclaiming storage at low cost, and will
-//! maintain decent memory locality.
-//! A [PinSlab] is different from a [Slab] in how it allocates the memory regions it
-//! uses to store objects.
-//! While a regular [Slab] is simply backed by a vector which grows as appropriate,
-//! this approach is not viable for pinning, since it would cause the objects to
-//! move while being reallocated.
-//! Instead [PinSlab] maintains a growable collection of fixed-size memory regions,
-//! allowing it to store and reference immovable objects through the [pin API].
-//! Each future inserted into the slab is assigned an _index_, which we will be
-//! using below.
-//! We now call the inserted future a _task_, and you can think of this index as a
-//! unique task identifier.
+//! The [Unordered] type stores all futures being polled in a [PinSlab]
+//! (Inspired by the [slab] crate). A slab is capable of utomatically reclaiming
+//! storage at low cost, and will maintain decent memory locality. A [PinSlab]
+//! is different from a [Slab] in how it allocates the memory regions it uses to
+//! store objects. While a regular [Slab] is simply backed by a vector which
+//! grows as appropriate, this approach is not viable for pinning, since it
+//! would cause the objects to move while being reallocated. Instead [PinSlab]
+//! maintains a growable collection of fixed-size memory regions, allowing it to
+//! store and reference immovable objects through the [pin API]. Each future
+//! inserted into the slab is assigned an _index_, which we will be using below.
+//! We now call the inserted future a _task_, and you can think of this index as
+//! a unique task identifier.
 //!
-//! Next to the slab we maintain two [bit sets], one _active_ and one _alternate_.
-//! When a task registers interest in waking up, the bit associated with its index
-//! is set in the active set, and the latest waker passed into [Unordered] is called
-//! to wake it up.
-//! Once [Unordered] is polled, it atomically swaps the active and alternate
-//! [bit sets], waits until it has exclusive access to the now _alternate_ [BitSet],
-//! and drains it from all the indexes which have been flagged to determine which
-//! tasks to poll.
-//! Each task is then polled _once_ in order.
-//! If the task is [Ready], its result is yielded.
-//! After we receive control again, we continue draining the alternate set in this
-//! manner, until it is empty.
-//! When this is done we yield once, then we start the cycle over again.
+//! Next to the slab we maintain two [BitSets][BitSet], one _active_ and one
+//! _alternate_. When a task registers interest in waking up, the bit associated
+//! with its index is set in the active set, and the latest waker passed into
+//! [Unordered] is called to wake it up. Once [Unordered] is polled, it
+//! atomically swaps the active and alternate [BitSets][BitSet], waits until it
+//! has exclusive access to the now _alternate_ [BitSet], and drains it from all
+//! the indexes which have been flagged to determine which tasks to poll. Each
+//! task is then polled _once_ in order. If the task is [Ready], its result is
+//! yielded. After we receive control again, we continue draining the alternate
+//! set in this manner, until it is empty. When this is done we yield once, then
+//! we start the cycle over again.
 //!
-//! [slab]: https://github.com/carllerche/slab
+//! [BitSet]: https://docs.rs/uniset/latest/uniset/struct.BitSet.html
+//! [futures crate]: https://docs.rs/futures/latest/futures
+//! [futures-rs]: https://crates.io/crates/futures
+//! [futures-rs]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
+//! [FuturesUnordered]: https://docs.rs/unicycle/latest/unicycle/type.FuturesUnordered.html
+//! [IndexedStreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.IndexedStreamsUnordered.html
+//! [limiting the amount FuturesUnordered is allowed to spin]: https://github.com/rust-lang/futures-rs/pull/2049
+//! [parking_lot]: https://crates.io/crates/parking_lot
 //! [pin API]: https://doc.rust-lang.org/std/pin/index.html
 //! [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
+//! [reported by Jon Gjengset]: https://github.com/rust-lang/futures-rs/issues/2047
 //! [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
-//! [futures-rs]: https://docs.rs/futures/latest/futures/stream/struct.FuturesUnordered.html
-//! [futures crate]: https://docs.rs/futures/latest/futures
-//! [bit sets]: https://docs.rs/uniset/latest/uniset/struct.BitSet.html
-//! [BitSet]: https://docs.rs/uniset/latest/uniset/struct.BitSet.html
+//! [slab]: https://github.com/carllerche/slab
+//! [spin abnormally]: https://github.com/udoprog/unicycle/blob/master/tests/spinning_futures_unordered.rs
+//! [StreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.StreamsUnordered.html
+
+#![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
 
 use self::pin_slab::PinSlab;
 use self::wake_set::{SharedWakeSet, WakeSet};
@@ -200,9 +195,9 @@ macro_rules! ready {
 /// async fn main() {
 ///     let mut futures = unicycle::FuturesUnordered::new();
 ///
-///     futures.push(time::delay_for(Duration::from_secs(2)));
-///     futures.push(time::delay_for(Duration::from_secs(3)));
-///     futures.push(time::delay_for(Duration::from_secs(1)));
+///     futures.push(time::sleep(Duration::from_secs(2)));
+///     futures.push(time::sleep(Duration::from_secs(3)));
+///     futures.push(time::sleep(Duration::from_secs(1)));
 ///
 ///     while let Some(_) = futures.next().await {
 ///         println!("tick");
@@ -347,9 +342,9 @@ impl Sentinel for Futures {}
 /// async fn main() {
 ///     let mut futures = unicycle::FuturesUnordered::new();
 ///
-///     futures.push(time::delay_for(Duration::from_secs(2)));
-///     futures.push(time::delay_for(Duration::from_secs(3)));
-///     futures.push(time::delay_for(Duration::from_secs(1)));
+///     futures.push(time::sleep(Duration::from_secs(2)));
+///     futures.push(time::sleep(Duration::from_secs(3)));
+///     futures.push(time::sleep(Duration::from_secs(1)));
 ///
 ///     while let Some(_) = futures.next().await {
 ///         println!("tick");
@@ -421,9 +416,9 @@ where
     /// async fn main() {
     ///     let mut futures = FuturesUnordered::new();
     ///
-    ///     futures.push(time::delay_for(Duration::from_secs(2)));
-    ///     futures.push(time::delay_for(Duration::from_secs(3)));
-    ///     futures.push(time::delay_for(Duration::from_secs(1)));
+    ///     futures.push(time::sleep(Duration::from_secs(2)));
+    ///     futures.push(time::sleep(Duration::from_secs(3)));
+    ///     futures.push(time::sleep(Duration::from_secs(1)));
     ///
     ///     while let Some(_) = futures.next().await {
     ///         println!("tick");
@@ -567,9 +562,10 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use std::future::Ready;
     /// use unicycle::FuturesUnordered;
     ///
-    /// let mut futures = FuturesUnordered::<tokio::time::Delay>::new();
+    /// let mut futures = FuturesUnordered::<Ready<()>>::new();
     /// assert!(futures.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
@@ -837,8 +833,8 @@ cfg_futures_rs! {
         /// # Examples
         ///
         /// ```rust
+        /// use tokio_stream::iter;
         /// use unicycle::StreamsUnordered;
-        /// use tokio::stream::iter;
         ///
         /// #[tokio::main]
         /// async fn main() {
@@ -872,8 +868,8 @@ cfg_futures_rs! {
         /// # Examples
         ///
         /// ```rust
+        /// use tokio_stream::iter;
         /// use unicycle::IndexedStreamsUnordered;
-        /// use tokio::stream::iter;
         ///
         /// #[tokio::main]
         /// async fn main() {

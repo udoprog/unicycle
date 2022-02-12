@@ -1,10 +1,9 @@
-use futures::{future::poll_fn, stream::Stream as _};
-use std::{
-    cell::Cell,
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use futures::future::poll_fn;
+use futures::stream::Stream;
+use std::cell::Cell;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 struct Spinner<'a>(&'a Cell<usize>);
 
@@ -23,26 +22,6 @@ impl Future for Spinner<'_> {
         cx.waker().wake_by_ref();
         Poll::Pending
     }
-}
-
-#[tokio::test]
-async fn test_spinning_futures_unordered() {
-    use futures::stream::FuturesUnordered;
-
-    let count = Cell::new(0);
-
-    let futures = FuturesUnordered::new();
-    futures.push(Spinner(&count));
-    pin_utils::pin_mut!(futures);
-
-    let _ = poll_fn::<(), _>(move |cx| {
-        let _ = Pin::new(&mut futures).poll_next(cx);
-        Poll::Ready(())
-    })
-    .await;
-
-    // Note: FuturesUnordered has spun a bit before yielding.
-    assert!(count.get() > 1);
 }
 
 #[tokio::test]
