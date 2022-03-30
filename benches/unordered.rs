@@ -56,7 +56,7 @@ pub fn polling_benchmark(c: &mut Criterion) {
             let txs = txs.clone();
 
             thread::spawn(move || {
-                while let Ok((n, tx)) = txs.pop() {
+                while let Some((n, tx)) = txs.pop() {
                     let _ = tx.send(n);
                 }
             });
@@ -102,7 +102,7 @@ pub fn polling_benchmark(c: &mut Criterion) {
             let txs = txs.clone();
 
             thread::spawn(move || {
-                while let Ok((n, tx)) = txs.pop() {
+                while let Some((n, tx)) = txs.pop() {
                     let _ = tx.send(n);
                 }
             });
