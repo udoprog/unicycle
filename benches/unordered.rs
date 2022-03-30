@@ -1,7 +1,3 @@
-#![feature(test)]
-
-extern crate test;
-
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use crossbeam::queue::SegQueue;
