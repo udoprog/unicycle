@@ -149,10 +149,8 @@ impl<T> PinSlab<T> {
         // Safety: all storage is pre-allocated in chunks, and each chunk
         // doesn't move. We only provide mutators to drop the storage through
         // `remove` (but it doesn't return it).
-        unsafe {
-            let entry = self.internal_get_mut(key)?;
-            Some(Pin::new_unchecked(entry))
-        }
+        let entry = self.internal_get_mut(key)?;
+        unsafe { Some(Pin::new_unchecked(entry)) }
     }
 
     /// Get a reference to the value at the given slot.
@@ -167,8 +165,6 @@ impl<T> PinSlab<T> {
     /// assert_eq!(Some(&42), slab.get(key));
     /// ```
     pub fn get(&mut self, key: usize) -> Option<&T> {
-        // Safety: We only use this to acquire an immutable reference.
-        // The internal calculation guarantees that the key is in bounds.
         self.internal_get(key)
     }
 
@@ -188,8 +184,6 @@ impl<T> PinSlab<T> {
     where
         T: Unpin,
     {
-        // Safety: simply exposing the internal function in case `T: Unpin` is
-        // safe.
         self.internal_get_mut(key)
     }
 
@@ -199,9 +193,6 @@ impl<T> PinSlab<T> {
         let (slot, offset, len) = calculate_key(key);
         let slot = self.slots.get_mut(slot)?;
 
-        // Safety: all slots are fully allocated and initialized in `new_slot`.
-        // As long as we have access to it, we know that we will only find
-        // initialized entries assuming offset < len.
         debug_assert!(offset < len);
 
         let entry = match &mut slot[offset] {
@@ -218,9 +209,6 @@ impl<T> PinSlab<T> {
         let (slot, offset, len) = calculate_key(key);
         let slot = self.slots.get(slot)?;
 
-        // Safety: all slots are fully allocated and initialized in `new_slot`.
-        // As long as we have access to it, we know that we will only find
-        // initialized entries assuming offset < len.
         debug_assert!(offset < len);
 
         let entry = match &slot[offset] {
