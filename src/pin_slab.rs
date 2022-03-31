@@ -32,7 +32,7 @@ const FIRST_SLOT_MASK: usize =
 pub struct PinSlab<T> {
     // Slots of memory. Once one has been allocated it is never moved.
     // This allows us to store entries in there and fetch them as `Pin<&mut T>`.
-    slots: Vec<Vec<Entry<T>>>,
+    slots: Vec<Box<[Entry<T>]>>,
     // Number of Filled elements currently in the slab
     len: usize,
     // Offset of the next available slot in the slab.
@@ -139,7 +139,7 @@ impl<T> PinSlab<T> {
     pub fn get(&mut self, key: usize) -> Option<&T> {
         // Safety: We only use this to acquire an immutable reference.
         // The internal calculation guarantees that the key is in bounds.
-        unsafe { self.internal_get(key) }
+        self.internal_get(key)
     }
 
     /// Get a mutable reference to the value at the given slot.
@@ -160,12 +160,12 @@ impl<T> PinSlab<T> {
     {
         // Safety: simply exposing the internal function in case `T: Unpin` is
         // safe.
-        unsafe { self.internal_get_mut(key) }
+        self.internal_get_mut(key)
     }
 
     /// Get a mutable reference to the value at the given slot.
     #[inline(always)]
-    unsafe fn internal_get_mut(&mut self, key: usize) -> Option<&mut T> {
+    fn internal_get_mut(&mut self, key: usize) -> Option<&mut T> {
         let (slot, offset, len) = calculate_key(key);
         let slot = self.slots.get_mut(slot)?;
 
@@ -184,7 +184,7 @@ impl<T> PinSlab<T> {
 
     /// Get a reference to the value at the given slot.
     #[inline(always)]
-    unsafe fn internal_get(&mut self, key: usize) -> Option<&T> {
+    fn internal_get(&mut self, key: usize) -> Option<&T> {
         let (slot, offset, len) = calculate_key(key);
         let slot = self.slots.get(slot)?;
 
@@ -193,7 +193,7 @@ impl<T> PinSlab<T> {
         // initialized entries assuming offset < len.
         debug_assert!(offset < len);
 
-        let entry = match &*slot.as_ptr().add(offset) {
+        let entry = match &slot[offset] {
             Entry::Occupied(entry) => entry,
             _ => return None,
         };
@@ -262,7 +262,7 @@ impl<T> PinSlab<T> {
     }
 
     /// Construct a new slot and store it in `self.slots`.
-    fn new_slot(&mut self, len: usize) -> &mut Vec<Entry<T>> {
+    fn new_slot(&mut self, len: usize) -> &mut Box<[Entry<T>]> {
         let d = (0..len).map(|_| Entry::None).collect();
 
         self.slots.push(d);
