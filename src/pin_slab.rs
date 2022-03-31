@@ -29,6 +29,39 @@ const FIRST_SLOT_MASK: usize =
 
 /// Pre-allocated storage for a uniform data type, with slots of immovable
 /// memory regions.
+///
+/// ## `Sync` and `Send` Auto Traits
+///
+/// `PinSlab<T>` is `Sync` or `Send` if `T` is. Examples:
+///
+/// `Send` and `Sync`:
+/// ```
+/// # use unicycle::pin_slab::PinSlab;
+/// fn assert_send<T: Send>(_: &T) {}
+/// fn assert_sync<T: Sync>(_: &T) {}
+///
+/// let slab = PinSlab::<i32>::new();
+/// assert_send(&slab);
+/// assert_sync(&slab);
+/// ```
+///
+/// `!Sync`:
+/// ```compile_fail
+/// # use unicycle::pin_slab::PinSlab;
+/// # fn assert_sync<T: Sync>(_: &T) {}
+///
+/// let slab = PinSlab::<std::cell::Cell<i32>>::new();
+/// assert_sync(&slab);
+/// ```
+///
+/// `!Send`:
+/// ```compile_fail
+/// # use unicycle::pin_slab::PinSlab;
+/// # fn assert_send<T: Send>(_: &T) {}
+///
+/// let slab = PinSlab::<std::rc::Rc<i32>>::new();
+/// assert_send(&slab);
+/// ```
 pub struct PinSlab<T> {
     // Slots of memory. Once one has been allocated it is never moved.
     // This allows us to store entries in there and fetch them as `Pin<&mut T>`.
@@ -38,9 +71,6 @@ pub struct PinSlab<T> {
     // Offset of the next available slot in the slab.
     next: usize,
 }
-
-unsafe impl<T> Send for PinSlab<T> where T: Send {}
-unsafe impl<T> Sync for PinSlab<T> where T: Sync {}
 
 enum Entry<T> {
     // Each slot is pre-allocated with entries of `None`.
