@@ -22,7 +22,7 @@ where
     F: FnOnce(&mut Context<'_>) -> R,
 {
     // Need to assigned owned a fixed location, so do not move it from here for the duration of the poll.
-    let internals = Internals::new(&**shared as *const Shared, index);
+    let internals = Internals::new(shared.clone(), index);
 
     let waker = RawWaker::new(&internals as *const _ as *const (), INTERNALS_VTABLE);
     let waker = mem::ManuallyDrop::new(unsafe { Waker::from_raw(waker) });
@@ -31,52 +31,58 @@ where
 }
 
 static INTERNALS_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
-    Internals::clone,
-    Internals::wake,
-    Internals::wake_by_ref,
-    Internals::drop,
+    Internals::unsafe_clone,
+    Internals::unsafe_wake,
+    Internals::unsafe_wake_by_ref,
+    Internals::unsafe_drop,
 );
 
 struct Internals {
-    shared: *const Shared,
+    shared: Arc<Shared>,
     index: usize,
 }
 
 impl Internals {
     /// Construct a new waker.
-    fn new(shared: *const Shared, index: usize) -> Self {
+    fn new(shared: Arc<Shared>, index: usize) -> Self {
         Self { shared, index }
     }
 
-    unsafe fn clone(this: *const ()) -> RawWaker {
+    unsafe fn unsafe_clone(this: *const ()) -> RawWaker {
+        // Safety: `this` is *const Self because it is called through the RawWaker vtable
         let this = &(*(this as *const Self));
-        let s1 = mem::ManuallyDrop::new(Arc::from_raw(this.shared));
-        #[allow(clippy::redundant_clone)]
-        let s2 = s1.clone();
-        let index = this.index;
-        let waker = Box::into_raw(Box::new(Internals::new(&**s2 as *const Shared, index)));
-        RawWaker::new(waker as *const (), INTERNALS_VTABLE)
+        this.clone()
     }
 
-    unsafe fn wake(this: *const ()) {
+    fn clone(&self) -> RawWaker {
+        let internals = Internals::new(self.shared.clone(), self.index);
+        let waker = Box::new(internals);
+        RawWaker::new(Box::into_raw(waker) as *const _, INTERNALS_VTABLE)
+    }
+
+    unsafe fn unsafe_wake(this: *const ()) {
+        // Safety: `this` is *const Self because it is called through the RawWaker vtable
         // Note: this will never be called when it's passed by ref.
         let this = Box::from_raw(this as *mut Self);
-        let shared = &(*this.shared);
-        shared.wake_set.wake(this.index);
-        shared.waker.wake_by_ref();
-        drop(Arc::from_raw(this.shared));
+        this.wake()
     }
 
-    unsafe fn wake_by_ref(this: *const ()) {
+    unsafe fn unsafe_wake_by_ref(this: *const ()) {
+        // Safety: `this` is *const Self because it is called through the RawWaker vtable
         let this = &(*(this as *const Self));
-        let shared = &(*this.shared);
-        shared.wake_set.wake(this.index);
+        this.wake()
+    }
+
+    fn wake(&self) {
+        // Safety: `this` is *const Self because it is called through the RawWaker vtable
+        let shared = &self.shared;
+        shared.wake_set.wake(self.index);
         shared.waker.wake_by_ref();
     }
 
-    unsafe fn drop(this: *const ()) {
-        let this = Box::from_raw(this as *mut Self);
-        drop(Arc::from_raw(this.shared));
+    unsafe fn unsafe_drop(this: *const ()) {
+        // Safety: `this` is *const Self because it is called through the RawWaker vtable
+        Box::from_raw(this as *mut Self);
     }
 }
 
@@ -146,13 +152,13 @@ fn noop_raw_waker() -> RawWaker {
         &RawWakerVTable::new(noop_clone, noop_wake, noop_wake_by_ref, noop_drop),
     );
 
-    unsafe fn noop_clone(_: *const ()) -> RawWaker {
+    fn noop_clone(_: *const ()) -> RawWaker {
         noop_raw_waker()
     }
 
-    unsafe fn noop_wake(_: *const ()) {}
+    fn noop_wake(_: *const ()) {}
 
-    unsafe fn noop_wake_by_ref(_: *const ()) {}
+    fn noop_wake_by_ref(_: *const ()) {}
 
-    unsafe fn noop_drop(_: *const ()) {}
+    fn noop_drop(_: *const ()) {}
 }
