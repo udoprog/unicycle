@@ -31,10 +31,10 @@ where
 }
 
 static INTERNALS_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
-    Internals::unsafe_clone,
-    Internals::unsafe_wake,
-    Internals::unsafe_wake_by_ref,
-    Internals::unsafe_drop,
+    Internals::clone_unchecked,
+    Internals::wake_unchecked,
+    Internals::wake_by_ref_unchecked,
+    Internals::drop_unchecked,
 );
 
 struct Internals {
@@ -48,7 +48,7 @@ impl Internals {
         Self { shared, index }
     }
 
-    unsafe fn unsafe_clone(this: *const ()) -> RawWaker {
+    unsafe fn clone_unchecked(this: *const ()) -> RawWaker {
         // Safety: `this` is *const Self because it is called through the RawWaker vtable
         let this = &(*(this as *const Self));
         this.clone()
@@ -60,14 +60,14 @@ impl Internals {
         RawWaker::new(Box::into_raw(waker) as *const _, INTERNALS_VTABLE)
     }
 
-    unsafe fn unsafe_wake(this: *const ()) {
+    unsafe fn wake_unchecked(this: *const ()) {
         // Safety: `this` is *const Self because it is called through the RawWaker vtable
         // Note: this will never be called when it's passed by ref.
         let this = Box::from_raw(this as *mut Self);
         this.wake()
     }
 
-    unsafe fn unsafe_wake_by_ref(this: *const ()) {
+    unsafe fn wake_by_ref_unchecked(this: *const ()) {
         // Safety: `this` is *const Self because it is called through the RawWaker vtable
         let this = &(*(this as *const Self));
         this.wake()
@@ -80,7 +80,7 @@ impl Internals {
         shared.waker.wake_by_ref();
     }
 
-    unsafe fn unsafe_drop(this: *const ()) {
+    unsafe fn drop_unchecked(this: *const ()) {
         // Safety: `this` is *const Self because it is called through the RawWaker vtable
         Box::from_raw(this as *mut Self);
     }
