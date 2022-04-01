@@ -251,12 +251,12 @@ impl<T> PinSlab<T> {
         debug_assert!(offset < len);
         let entry = &mut slot[offset];
 
-        match &*entry {
+        match entry {
             Entry::Occupied(..) => (),
             _ => return false,
         }
 
-        slot[offset] = Entry::Vacant(self.next);
+        *entry = Entry::Vacant(self.next);
         self.len -= 1;
         self.next = key;
 
@@ -345,31 +345,10 @@ const fn calculate_key(key: usize) -> (usize, usize, usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::{calculate_key, PinSlab, FIRST_SLOT_SIZE};
+    use super::{calculate_key, PinSlab};
 
     #[global_allocator]
     static ALLOCATOR: checkers::Allocator = checkers::Allocator::system();
-
-    fn slot_sizes() -> impl Iterator<Item = usize> {
-        (0usize..).map(|n| match n {
-            0 | 1 => FIRST_SLOT_SIZE,
-            n => FIRST_SLOT_SIZE << (n - 1),
-        })
-    }
-
-    #[test]
-    fn test_slot_sizes() {
-        assert_eq!(
-            vec![
-                FIRST_SLOT_SIZE,
-                FIRST_SLOT_SIZE,
-                FIRST_SLOT_SIZE << 1,
-                FIRST_SLOT_SIZE << 2,
-                FIRST_SLOT_SIZE << 3
-            ],
-            slot_sizes().take(5).collect::<Vec<_>>()
-        );
-    }
 
     #[test]
     fn key_test() {
