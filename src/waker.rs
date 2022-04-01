@@ -25,8 +25,10 @@ where
     let internals = Internals::new(shared.clone(), index);
 
     let waker = RawWaker::new(&internals as *const _ as *const (), INTERNALS_VTABLE);
-    let waker = mem::ManuallyDrop::new(unsafe { Waker::from_raw(waker) });
-    let mut cx = Context::from_waker(&*waker);
+    // Safety: We've created the vtable and data pointer to match `from_raw`'s requirements.
+    let waker = unsafe { Waker::from_raw(waker) };
+    let waker = mem::ManuallyDrop::new(waker);
+    let mut cx = Context::from_waker(&waker);
     f(&mut cx)
 }
 
@@ -161,4 +163,19 @@ fn noop_raw_waker() -> RawWaker {
     fn noop_wake_by_ref(_: *const ()) {}
 
     fn noop_drop(_: *const ()) {}
+}
+
+#[cfg(test)]
+mod test {
+    use super::poll_with_ref;
+    use crate::Shared;
+    use std::sync::Arc;
+
+    #[test]
+    fn basic_waker() {
+        let shared = Arc::new(Shared::new());
+        let index = 0;
+
+        poll_with_ref(&shared, index, |_| ())
+    }
 }
