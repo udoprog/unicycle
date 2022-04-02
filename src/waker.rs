@@ -8,7 +8,7 @@
 use crate::{lock::RwLock, Shared};
 use std::{
     cell::UnsafeCell,
-    mem, ptr,
+    ptr,
     sync::Arc,
     task::{Context, RawWaker, RawWakerVTable, Waker},
 };
@@ -24,9 +24,8 @@ where
     // Need to assigned owned a fixed location, so do not move it from here for the duration of the poll.
     let internals = RefWaker { shared, index };
 
-    let waker = internals.as_raw_waker();
-    let waker = mem::ManuallyDrop::new(unsafe { Waker::from_raw(waker) });
-    let mut cx = Context::from_waker(&*waker);
+    let waker = unsafe { Waker::from_raw(internals.as_raw_waker()) };
+    let mut cx = Context::from_waker(&waker);
     f(&mut cx)
 }
 
