@@ -22,12 +22,49 @@ where
     F: FnOnce(&mut Context<'_>) -> R,
 {
     // Need to assigned owned a fixed location, so do not move it from here for the duration of the poll.
-    let internals = Internals::new(shared.clone(), index);
+    let internals = RefWaker { shared, index };
 
-    let waker = RawWaker::new(&internals as *const _ as *const (), INTERNALS_VTABLE);
+    let waker = internals.as_raw_waker();
     let waker = mem::ManuallyDrop::new(unsafe { Waker::from_raw(waker) });
     let mut cx = Context::from_waker(&*waker);
     f(&mut cx)
+}
+
+/// A waker that references the [Shared] waker data by reference
+///
+/// When cloned it converts to an [Internals] waker.
+struct RefWaker<'a> {
+    shared: &'a Arc<Shared>,
+    index: usize,
+}
+
+impl<'a> RefWaker<'a> {
+    const VTABLE: &'static RawWakerVTable = &RawWakerVTable::new(
+        Self::clone,
+        Self::wake_by_ref, // Use wake_by_ref for wake because RefWaker is always passed by ref
+        Self::wake_by_ref,
+        Self::drop,
+    );
+
+    fn clone(this: *const ()) -> RawWaker {
+        // Safety: clone is called throught he vtable, so we know this is a pointer to Self.
+        let this = unsafe { &*(this as *const Self) };
+        let internals = Box::new(Internals::new(this.shared.clone(), this.index));
+        RawWaker::new(Box::into_raw(internals) as *const (), INTERNALS_VTABLE)
+    }
+
+    fn wake_by_ref(this: *const ()) {
+        // Safety: wake_by_ref is called throught he vtable, so we know this is a pointer to Self.
+        let this = unsafe { &*(this as *const Self) };
+        this.shared.wake_set.wake(this.index);
+        this.shared.waker.wake_by_ref();
+    }
+
+    fn drop(_: *const ()) {}
+
+    fn as_raw_waker(&self) -> RawWaker {
+        RawWaker::new(self as *const _ as *const (), Self::VTABLE)
+    }
 }
 
 static INTERNALS_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
