@@ -47,20 +47,23 @@ impl<'a> RefWaker<'a> {
     );
 
     fn clone(this: *const ()) -> RawWaker {
-        // Safety: clone is called throught he vtable, so we know this is a pointer to Self.
+        // Safety: clone is called through the vtable, so we know this is a pointer to Self.
         let this = unsafe { &*(this as *const Self) };
-        let internals = Box::new(Internals::new(this.shared.clone(), this.index));
-        RawWaker::new(Box::into_raw(internals) as *const (), INTERNALS_VTABLE)
+        let internals = Arc::new(Internals::new(this.shared.clone(), this.index));
+        RawWaker::new(Arc::into_raw(internals) as *const (), INTERNALS_VTABLE)
     }
 
     fn wake_by_ref(this: *const ()) {
-        // Safety: wake_by_ref is called throught he vtable, so we know this is a pointer to Self.
+        // Safety: wake_by_ref is called through the vtable, so we know this is a pointer to Self.
         let this = unsafe { &*(this as *const Self) };
         this.shared.wake_set.wake(this.index);
         this.shared.waker.wake_by_ref();
     }
 
-    fn drop(_: *const ()) {}
+    fn drop(_: *const ()) {
+        // Nothing needs to be done here because the argument is actually a &Self which will
+        // be dropped by whoever owns the Self.
+    }
 
     fn as_raw_waker(&self) -> RawWaker {
         RawWaker::new(self as *const _ as *const (), Self::VTABLE)
@@ -86,21 +89,16 @@ impl Internals {
     }
 
     unsafe fn clone_unchecked(this: *const ()) -> RawWaker {
-        // Safety: `this` is *const Self because it is called through the RawWaker vtable
-        let this = &(*(this as *const Self));
-        this.clone()
-    }
-
-    fn clone(&self) -> RawWaker {
-        let internals = Internals::new(self.shared.clone(), self.index);
-        let waker = Box::new(internals);
-        RawWaker::new(Box::into_raw(waker) as *const _, INTERNALS_VTABLE)
+        // Safety: this is an `Arc<Self>` so it's safe to increment the ref count.
+        // The ref count will be dropped in `drop_unchecked`.
+        Arc::increment_strong_count(this);
+        RawWaker::new(this, INTERNALS_VTABLE)
     }
 
     unsafe fn wake_unchecked(this: *const ()) {
         // Safety: `this` is *const Self because it is called through the RawWaker vtable
         // Note: this will never be called when it's passed by ref.
-        let this = Box::from_raw(this as *mut Self);
+        let this = Arc::from_raw(this as *mut Self);
         this.wake()
     }
 
@@ -119,7 +117,7 @@ impl Internals {
 
     unsafe fn drop_unchecked(this: *const ()) {
         // Safety: `this` is *const Self because it is called through the RawWaker vtable
-        Box::from_raw(this as *mut Self);
+        Arc::from_raw(this as *mut Self);
     }
 }
 
