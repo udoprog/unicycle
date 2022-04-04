@@ -168,8 +168,11 @@ fn noop_raw_waker() -> RawWaker {
 #[cfg(test)]
 mod test {
     use super::poll_with_ref;
+    use crate::FuturesUnordered;
     use crate::Shared;
+    use futures::Future;
     use std::sync::Arc;
+    use std::task::{Poll, Waker};
 
     #[test]
     fn basic_waker() {
@@ -177,5 +180,70 @@ mod test {
         let index = 0;
 
         poll_with_ref(&shared, index, |_| ())
+    }
+
+    #[test]
+    fn long_lived_waker() {
+        struct GetWaker;
+        impl Future for GetWaker {
+            type Output = Waker;
+
+            fn poll(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Self::Output> {
+                Poll::Ready(cx.waker().clone())
+            }
+        }
+
+        let waker = block_on::block_on(async {
+            let mut futures = FuturesUnordered::new();
+            futures.push(GetWaker);
+
+            futures.next().await.unwrap()
+        });
+
+        waker.wake();
+    }
+
+    mod block_on {
+        //! A way to run a future to completion on the current thread.
+        //!
+        //! Taken from https://doc.rust-lang.org/std/task/trait.Wake.html#examples
+
+        use futures::Future;
+        use std::{
+            sync::Arc,
+            task::{Context, Poll, Wake},
+            thread::{self, Thread},
+        };
+
+        /// A waker that wakes up the current thread when called.
+        struct ThreadWaker(Thread);
+
+        impl Wake for ThreadWaker {
+            fn wake(self: Arc<Self>) {
+                self.0.unpark();
+            }
+        }
+
+        /// Run a future to completion on the current thread.
+        pub(super) fn block_on<T>(fut: impl Future<Output = T>) -> T {
+            // Pin the future so it can be polled.
+            let mut fut = Box::pin(fut);
+
+            // Create a new context to be passed to the future.
+            let t = thread::current();
+            let waker = Arc::new(ThreadWaker(t)).into();
+            let mut cx = Context::from_waker(&waker);
+
+            // Run the future to completion.
+            loop {
+                match fut.as_mut().poll(&mut cx) {
+                    Poll::Ready(res) => return res,
+                    Poll::Pending => thread::park(),
+                }
+            }
+        }
     }
 }
