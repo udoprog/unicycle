@@ -8,7 +8,7 @@
 use crate::{lock::RwLock, Shared};
 use std::{
     cell::UnsafeCell,
-    mem, ptr,
+    ptr,
     sync::Arc,
     task::{Context, RawWaker, RawWakerVTable, Waker},
 };
@@ -22,14 +22,51 @@ where
     F: FnOnce(&mut Context<'_>) -> R,
 {
     // Need to assigned owned a fixed location, so do not move it from here for the duration of the poll.
-    let internals = Internals::new(shared.clone(), index);
+    let internals = RefWaker { shared, index };
 
-    let waker = RawWaker::new(&internals as *const _ as *const (), INTERNALS_VTABLE);
-    // Safety: We've created the vtable and data pointer to match `from_raw`'s requirements.
-    let waker = unsafe { Waker::from_raw(waker) };
-    let waker = mem::ManuallyDrop::new(waker);
+    let waker = unsafe { Waker::from_raw(internals.as_raw_waker()) };
     let mut cx = Context::from_waker(&waker);
     f(&mut cx)
+}
+
+/// A waker that references the [Shared] waker data by reference
+///
+/// When cloned it converts to an [Internals] waker.
+struct RefWaker<'a> {
+    shared: &'a Arc<Shared>,
+    index: usize,
+}
+
+impl<'a> RefWaker<'a> {
+    const VTABLE: &'static RawWakerVTable = &RawWakerVTable::new(
+        Self::clone,
+        Self::wake_by_ref, // Use wake_by_ref for wake because RefWaker is always passed by ref
+        Self::wake_by_ref,
+        Self::drop,
+    );
+
+    fn clone(this: *const ()) -> RawWaker {
+        // Safety: clone is called through the vtable, so we know this is a pointer to Self.
+        let this = unsafe { &*(this as *const Self) };
+        let internals = Arc::new(Internals::new(this.shared.clone(), this.index));
+        RawWaker::new(Arc::into_raw(internals) as *const (), INTERNALS_VTABLE)
+    }
+
+    fn wake_by_ref(this: *const ()) {
+        // Safety: wake_by_ref is called through the vtable, so we know this is a pointer to Self.
+        let this = unsafe { &*(this as *const Self) };
+        this.shared.wake_set.wake(this.index);
+        this.shared.waker.wake_by_ref();
+    }
+
+    fn drop(_: *const ()) {
+        // Nothing needs to be done here because the argument is actually a &Self which will
+        // be dropped by whoever owns the Self.
+    }
+
+    fn as_raw_waker(&self) -> RawWaker {
+        RawWaker::new(self as *const _ as *const (), Self::VTABLE)
+    }
 }
 
 static INTERNALS_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
@@ -51,21 +88,16 @@ impl Internals {
     }
 
     unsafe fn clone_unchecked(this: *const ()) -> RawWaker {
-        // Safety: `this` is *const Self because it is called through the RawWaker vtable
-        let this = &(*(this as *const Self));
-        this.clone()
-    }
-
-    fn clone(&self) -> RawWaker {
-        let internals = Internals::new(self.shared.clone(), self.index);
-        let waker = Box::new(internals);
-        RawWaker::new(Box::into_raw(waker) as *const _, INTERNALS_VTABLE)
+        // Safety: this is an `Arc<Self>` so it's safe to increment the ref count.
+        // The ref count will be dropped in `drop_unchecked`.
+        Arc::increment_strong_count(this);
+        RawWaker::new(this, INTERNALS_VTABLE)
     }
 
     unsafe fn wake_unchecked(this: *const ()) {
         // Safety: `this` is *const Self because it is called through the RawWaker vtable
         // Note: this will never be called when it's passed by ref.
-        let this = Box::from_raw(this as *mut Self);
+        let this = Arc::from_raw(this as *mut Self);
         this.wake()
     }
 
@@ -84,7 +116,7 @@ impl Internals {
 
     unsafe fn drop_unchecked(this: *const ()) {
         // Safety: `this` is *const Self because it is called through the RawWaker vtable
-        Box::from_raw(this as *mut Self);
+        Arc::from_raw(this as *mut Self);
     }
 }
 
