@@ -48,7 +48,7 @@ impl<'a> RefWaker<'a> {
     fn clone(this: *const ()) -> RawWaker {
         // Safety: clone is called through the vtable, so we know this is a pointer to Self.
         let this = unsafe { &*(this as *const Self) };
-        let internals = Arc::new(Internals::new(this.shared.clone(), this.index));
+        let internals = this.shared.get_waker(this.index);
         RawWaker::new(Arc::into_raw(internals) as *const (), INTERNALS_VTABLE)
     }
 
@@ -70,20 +70,20 @@ impl<'a> RefWaker<'a> {
 }
 
 static INTERNALS_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
-    Internals::clone_unchecked,
-    Internals::wake_unchecked,
-    Internals::wake_by_ref_unchecked,
-    Internals::drop_unchecked,
+    InternalWaker::clone_unchecked,
+    InternalWaker::wake_unchecked,
+    InternalWaker::wake_by_ref_unchecked,
+    InternalWaker::drop_unchecked,
 );
 
-struct Internals {
+pub(crate) struct InternalWaker {
     shared: Arc<Shared>,
     index: usize,
 }
 
-impl Internals {
+impl InternalWaker {
     /// Construct a new waker.
-    fn new(shared: Arc<Shared>, index: usize) -> Self {
+    pub(crate) fn new(shared: Arc<Shared>, index: usize) -> Self {
         Self { shared, index }
     }
 
