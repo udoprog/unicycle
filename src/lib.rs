@@ -159,7 +159,6 @@ use self::waker::SharedWaker;
 #[cfg(feature = "futures-rs")]
 use futures_core::{FusedStream, Stream};
 use parking_lot::RwLock;
-use std::sync::Weak;
 use std::{
     future::Future,
     iter, marker, mem,
@@ -169,7 +168,7 @@ use std::{
     task::{Context, Poll},
 };
 use uniset::BitSet;
-use waker::InternalWaker;
+use waker::{InternalWaker, InternalWakerRef};
 
 mod lock;
 pub mod pin_slab;
@@ -218,7 +217,7 @@ struct Shared {
     /// The currently registered wake set.
     wake_set: SharedWakeSet,
 
-    all_wakers: RwLock<Vec<Weak<InternalWaker>>>,
+    all_wakers: RwLock<Vec<InternalWaker>>,
 }
 
 impl Shared {
@@ -308,32 +307,28 @@ impl Shared {
         (**alternate).as_mut_set()
     }
 
-    fn get_waker(self: &Arc<Self>, index: usize) -> Arc<InternalWaker> {
-        // Try to get the existing waker using just a read lock
-        if let Some(waker) = self.all_wakers.read().get(index) {
-            if let Some(waker) = waker.upgrade() {
-                return waker;
+    fn get_waker(&self, index: usize) -> InternalWakerRef {
+        {
+            let all_wakers = self.all_wakers.read();
+            if let Some(waker) = all_wakers.get(index) {
+                return waker.as_internal_ref();
             }
         }
-
-        // We need to create a new waker (unless one got created in between)
         let mut all_wakers = self.all_wakers.write();
-        match all_wakers.get(index) {
-            Some(waker) => match waker.upgrade() {
-                Some(waker) => waker,
-                None => {
-                    let waker = Arc::new(InternalWaker::new(self.clone(), index));
-                    all_wakers[index] = Arc::downgrade(&waker);
-                    waker
-                }
-            },
-            None => {
-                all_wakers.resize(index + 1, Weak::new());
-                let waker = Arc::new(InternalWaker::new(self.clone(), index));
-                all_wakers[index] = Arc::downgrade(&waker);
-                waker
-            }
+        if let Some(waker) = all_wakers.get(index) {
+            waker.as_internal_ref()
+        } else {
+            let len = all_wakers.len();
+            all_wakers.extend((len..index + 1).map(|i| InternalWaker::new(self, i)));
+            debug_assert_eq!(all_wakers[index].index, index);
+            all_wakers[index].as_internal_ref()
         }
+    }
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        println!("Dropping Shared")
     }
 }
 

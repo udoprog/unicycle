@@ -8,6 +8,7 @@
 use crate::{lock::RwLock, Shared};
 use std::{
     cell::UnsafeCell,
+    mem::{self, ManuallyDrop},
     ptr,
     sync::Arc,
     task::{Context, RawWaker, RawWakerVTable, Waker},
@@ -49,7 +50,7 @@ impl<'a> RefWaker<'a> {
         // Safety: clone is called through the vtable, so we know this is a pointer to Self.
         let this = unsafe { &*(this as *const Self) };
         let internals = this.shared.get_waker(this.index);
-        RawWaker::new(Arc::into_raw(internals) as *const (), INTERNALS_VTABLE)
+        RawWaker::new(unsafe { mem::transmute(internals) }, INTERNALS_VTABLE)
     }
 
     fn wake_by_ref(this: *const ()) {
@@ -77,46 +78,60 @@ static INTERNALS_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
 );
 
 pub(crate) struct InternalWaker {
-    shared: Arc<Shared>,
-    index: usize,
+    shared: *const Shared,
+    pub(crate) index: usize,
 }
 
 impl InternalWaker {
     /// Construct a new waker.
-    pub(crate) fn new(shared: Arc<Shared>, index: usize) -> Self {
+    pub(crate) fn new(shared: *const Shared, index: usize) -> Self {
         Self { shared, index }
     }
 
-    unsafe fn clone_unchecked(this: *const ()) -> RawWaker {
-        // Safety: this is an `Arc<Self>` so it's safe to increment the ref count.
-        // The ref count will be dropped in `drop_unchecked`.
-        Arc::increment_strong_count(this);
-        RawWaker::new(this, INTERNALS_VTABLE)
+    pub fn as_internal_ref(&self) -> InternalWakerRef {
+        println!("Creating InternalWakerRef");
+        unsafe {
+            Arc::increment_strong_count(self.shared);
+            InternalWakerRef(self)
+        }
     }
 
-    unsafe fn wake_unchecked(this: *const ()) {
-        // Safety: `this` is *const Self because it is called through the RawWaker vtable
-        // Note: this will never be called when it's passed by ref.
-        let this = Arc::from_raw(this as *mut Self);
-        this.wake()
+    unsafe fn clone_unchecked(ptr: *const ()) -> RawWaker {
+        let this: ManuallyDrop<InternalWakerRef> = mem::transmute(ptr);
+        let internals = &*this.0;
+        let internals = (*(internals.shared)).get_waker((*this.0).index);
+        RawWaker::new(mem::transmute(internals), INTERNALS_VTABLE)
     }
 
     unsafe fn wake_by_ref_unchecked(this: *const ()) {
-        // Safety: `this` is *const Self because it is called through the RawWaker vtable
-        let this = &(*(this as *const Self));
-        this.wake()
+        let this: ManuallyDrop<InternalWakerRef> = mem::transmute(this);
+        let shared = &*(*this.0).shared;
+        shared.wake_set.wake((*this.0).index);
+        shared.waker.wake_by_ref();
     }
 
-    fn wake(&self) {
-        // Safety: `this` is *const Self because it is called through the RawWaker vtable
-        let shared = &self.shared;
-        shared.wake_set.wake(self.index);
+    unsafe fn wake_unchecked(this: *const ()) {
+        let this: InternalWakerRef = mem::transmute(this);
+        let shared = &*(*this.0).shared;
+        shared.wake_set.wake((*this.0).index);
         shared.waker.wake_by_ref();
     }
 
     unsafe fn drop_unchecked(this: *const ()) {
-        // Safety: `this` is *const Self because it is called through the RawWaker vtable
-        Arc::from_raw(this as *mut Self);
+        let _this: InternalWakerRef = mem::transmute(this);
+    }
+}
+
+#[repr(transparent)]
+pub(crate) struct InternalWakerRef(*const InternalWaker);
+
+impl Drop for InternalWakerRef {
+    fn drop(&mut self) {
+        println!("Dropping InternalWakerRef");
+        unsafe {
+            let internal = &*self.0;
+            Arc::decrement_strong_count(&*internal.shared)
+        }
     }
 }
 
@@ -212,6 +227,28 @@ mod test {
         let index = 0;
 
         poll_with_ref(&shared, index, |_| ())
+    }
+
+    #[test]
+    fn clone_waker() {
+        struct GetWaker;
+        impl Future for GetWaker {
+            type Output = Waker;
+
+            fn poll(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Self::Output> {
+                Poll::Ready(cx.waker().clone())
+            }
+        }
+
+        block_on::block_on(async {
+            let mut futures = FuturesUnordered::new();
+            futures.push(GetWaker);
+
+            futures.next().await.unwrap();
+        });
     }
 
     #[test]
