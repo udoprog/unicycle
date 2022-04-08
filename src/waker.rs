@@ -217,7 +217,11 @@ mod test {
     use super::poll_with_ref;
     use crate::FuturesUnordered;
     use crate::Shared;
+    use futures::future::poll_fn;
     use futures::Future;
+    use std::cell::RefCell;
+    use std::pin::Pin;
+    use std::rc::Rc;
     use std::sync::Arc;
     use std::task::{Poll, Waker};
 
@@ -273,6 +277,75 @@ mod test {
         });
 
         waker.wake();
+    }
+
+    #[test]
+    fn many_wakers() {
+        // This test primarily makes sure that the array of Wakers stays pinned
+        // as more wakers are added.
+
+        block_on::block_on(async {
+            let mut futures: FuturesUnordered<Box<dyn Future<Output = ()> + Unpin>> =
+                FuturesUnordered::new();
+
+            let wake1 = Rc::new(RefCell::new(None));
+            let wake2: Rc<RefCell<Option<Waker>>> = Rc::new(RefCell::new(None));
+            let woken = Rc::new(RefCell::new(false));
+
+            {
+                let woken = woken.clone();
+                let wake1 = wake1.clone();
+                let wake2 = wake2.clone();
+                futures.push(Box::new(poll_fn(move |cx| {
+                    if *woken.borrow() {
+                        // We've been awoken, so complete
+                        Poll::Ready(())
+                    } else {
+                        if wake1.borrow().is_none() {
+                            *wake1.borrow_mut() = Some(cx.waker().clone());
+                        }
+                        // Wake the other future if somehow it ran before us.
+                        if let Some(waker) = wake2.borrow().as_ref() {
+                            waker.wake_by_ref()
+                        }
+                        Poll::Pending
+                    }
+                })));
+            }
+
+            // Poll our future once to be sure to clone the waker
+            poll_fn(|cx| {
+                assert_eq!(
+                    crate::PollNext::poll_next(Pin::new(&mut futures), cx),
+                    Poll::Pending
+                );
+                Poll::Ready(())
+            })
+            .await;
+
+            // Push a bunch of do-nothing futures to force the underlying waker table to resize.
+            for _ in 0..1000 {
+                futures.push(Box::new(poll_fn(|_| Poll::Ready(()))));
+            }
+
+            // Now push a future that wakes the first one
+            futures.push(Box::new(poll_fn(move |cx| {
+                match &*wake1.borrow() {
+                    Some(waker) => {
+                        *woken.borrow_mut() = true;
+                        waker.wake_by_ref();
+                        Poll::Ready(())
+                    }
+                    None => {
+                        // the other future hasn't run yet, so add our waker and then return pending.
+                        *wake2.borrow_mut() = Some(cx.waker().clone());
+                        Poll::Pending
+                    }
+                }
+            })));
+
+            while futures.next().await.is_some() {}
+        })
     }
 
     mod block_on {
