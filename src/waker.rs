@@ -89,7 +89,6 @@ impl InternalWaker {
     }
 
     pub fn as_internal_ref(&self) -> InternalWakerRef {
-        println!("Creating InternalWakerRef");
         unsafe {
             Arc::increment_strong_count(self.shared);
             InternalWakerRef(self)
@@ -127,7 +126,6 @@ pub(crate) struct InternalWakerRef(*const InternalWaker);
 
 impl Drop for InternalWakerRef {
     fn drop(&mut self) {
-        println!("Dropping InternalWakerRef");
         unsafe {
             let internal = &*self.0;
             Arc::decrement_strong_count(&*internal.shared)
@@ -220,9 +218,11 @@ mod test {
     use futures::future::poll_fn;
     use futures::Future;
     use std::cell::RefCell;
+    use std::mem;
     use std::pin::Pin;
     use std::rc::Rc;
     use std::sync::Arc;
+    use std::task::Context;
     use std::task::{Poll, Waker};
 
     #[test]
@@ -285,8 +285,7 @@ mod test {
         // as more wakers are added.
 
         block_on::block_on(async {
-            let mut futures: FuturesUnordered<Box<dyn Future<Output = ()> + Unpin>> =
-                FuturesUnordered::new();
+            let mut futures = FuturesUnordered::new();
 
             let wake1 = Rc::new(RefCell::new(None));
             let wake2: Rc<RefCell<Option<Waker>>> = Rc::new(RefCell::new(None));
@@ -296,7 +295,7 @@ mod test {
                 let woken = woken.clone();
                 let wake1 = wake1.clone();
                 let wake2 = wake2.clone();
-                futures.push(Box::new(poll_fn(move |cx| {
+                futures.push(FakeDynFuture::new(poll_fn(move |cx| {
                     if *woken.borrow() {
                         // We've been awoken, so complete
                         Poll::Ready(())
@@ -324,12 +323,19 @@ mod test {
             .await;
 
             // Push a bunch of do-nothing futures to force the underlying waker table to resize.
-            for _ in 0..1000 {
-                futures.push(Box::new(poll_fn(|_| Poll::Ready(()))));
+            //
+            // We do 127 of them because that the smallest number that fails in miri and segfaults
+            // natively.
+            for _ in 0..127 {
+                futures.push(FakeDynFuture::new(poll_fn(|cx| {
+                    // clone the waker to force the table to fill in.
+                    let _ = cx.waker().clone();
+                    Poll::Ready(())
+                })));
             }
 
             // Now push a future that wakes the first one
-            futures.push(Box::new(poll_fn(move |cx| {
+            futures.push(FakeDynFuture::new(poll_fn(move |cx| {
                 match &*wake1.borrow() {
                     Some(waker) => {
                         *woken.borrow_mut() = true;
@@ -346,6 +352,43 @@ mod test {
 
             while futures.next().await.is_some() {}
         })
+    }
+
+    /// Miri can't handle the vtables we ended up with originally, so this is a manual version
+    /// that should work better with miri.
+    struct FakeDynFuture<T> {
+        future: *const (),
+        poll_fn: fn(this: *const (), cx: &mut Context) -> Poll<T>,
+        drop_fn: fn(this: *const ()),
+    }
+
+    impl<T> FakeDynFuture<T> {
+        fn new<F: Future<Output = T>>(fut: F) -> Self {
+            Self {
+                future: unsafe { mem::transmute(Box::pin(fut)) },
+                poll_fn: |this, cx| {
+                    let this = unsafe { mem::transmute::<_, Pin<&mut F>>(this) };
+                    this.poll(cx)
+                },
+                drop_fn: |this| unsafe {
+                    mem::transmute::<_, Pin<Box<F>>>(this);
+                },
+            }
+        }
+    }
+
+    impl<T> Future for FakeDynFuture<T> {
+        type Output = T;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            (self.poll_fn)(self.future, cx)
+        }
+    }
+
+    impl<T> Drop for FakeDynFuture<T> {
+        fn drop(&mut self) {
+            (self.drop_fn)(self.future)
+        }
     }
 
     mod block_on {
