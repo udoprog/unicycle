@@ -1,6 +1,6 @@
 use std::{
     mem::{self, MaybeUninit},
-    ops::Index,
+    ops::{Index, IndexMut},
 };
 
 pub struct PinVec<T> {
@@ -23,11 +23,26 @@ impl<T> PinVec<T> {
         self.len
     }
 
+    pub fn clear(&mut self) {
+        self.slots.clear();
+        self.len = 0;
+    }
+
     pub fn get(&self, index: usize) -> Option<&T> {
         if index < self.len() {
             let (slot, offset, _) = calculate_key(index);
             // Safety: We guarantee that all indices <= self.len are initialized
             unsafe { Some(self.slots[slot][offset].assume_init_ref()) }
+        } else {
+            None
+        }
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+        if index < self.len() {
+            let (slot, offset, _) = calculate_key(index);
+            // Safety: We guarantee that all indices <= self.len are initialized
+            unsafe { Some(self.slots[slot][offset].assume_init_mut()) }
         } else {
             None
         }
@@ -61,6 +76,12 @@ impl<T> Index<usize> for PinVec<T> {
     }
 }
 
+impl<T> IndexMut<usize> for PinVec<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.get_mut(index).unwrap()
+    }
+}
+
 // Size of the first slot.
 const FIRST_SLOT_SIZE: usize = 16;
 // The initial number of bits to ignore for the first slot.
@@ -81,4 +102,25 @@ const fn calculate_key(key: usize) -> (usize, usize, usize) {
     };
 
     (slot, key - start, end - start)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::pin_vec::calculate_key;
+
+    #[test]
+    fn key_test() {
+        // NB: range of the first slot.
+        assert_eq!((0, 0, 16), calculate_key(0));
+        assert_eq!((0, 15, 16), calculate_key(15));
+
+        for i in 4..=62 {
+            let end_range = 1usize << i;
+            assert_eq!((i - 3, 0, end_range), calculate_key(end_range));
+            assert_eq!(
+                (i - 3, end_range - 1, end_range),
+                calculate_key((1usize << (i + 1)) - 1)
+            );
+        }
+    }
 }
