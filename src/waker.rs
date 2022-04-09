@@ -78,6 +78,10 @@ static INTERNALS_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
 );
 
 pub(crate) struct InternalWaker {
+    /// A pointer to the Shared task data.
+    ///
+    /// This is actually an Arc, so it's possible to do increment_strong_count and
+    /// decrement_strong_count on it.
     shared: *const Shared,
     pub(crate) index: usize,
 }
@@ -90,6 +94,8 @@ impl InternalWaker {
 
     pub fn as_internal_ref(&self) -> InternalWakerRef {
         unsafe {
+            // Safety: self.shared is an Arc, and this will be decremented again int
+            // InternalWakerRef::drop.
             Arc::increment_strong_count(self.shared);
             InternalWakerRef(self)
         }
@@ -97,9 +103,7 @@ impl InternalWaker {
 
     unsafe fn clone_unchecked(ptr: *const ()) -> RawWaker {
         let this: ManuallyDrop<InternalWakerRef> = mem::transmute(ptr);
-        let internals = &*this.0;
-        let internals = (*(internals.shared)).get_waker((*this.0).index);
-        RawWaker::new(mem::transmute(internals), INTERNALS_VTABLE)
+        RawWaker::new(mem::transmute(this.clone()), INTERNALS_VTABLE)
     }
 
     unsafe fn wake_by_ref_unchecked(this: *const ()) {
@@ -123,6 +127,15 @@ impl InternalWaker {
 
 #[repr(transparent)]
 pub(crate) struct InternalWakerRef(*const InternalWaker);
+
+impl Clone for InternalWakerRef {
+    fn clone(&self) -> Self {
+        // Safety: shared is an Arc, and the count will be decremented again when the clone
+        // is dropped.
+        unsafe { Arc::increment_strong_count((*self.0).shared) }
+        Self(self.0)
+    }
+}
 
 impl Drop for InternalWakerRef {
     fn drop(&mut self) {
