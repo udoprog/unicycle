@@ -2,10 +2,15 @@
 //!
 //! We provide two different forms of wakers:
 //!
-//! * `Internals` - which takes full ownership of the plumbing necessary to
-//!   wake the task from another thread.
+//! * [RefWaker] - A lightweight waker stored on the stack that converts into [InternalWaker]
+//!   when cloned.
+//! * [InternalWaker] - Takes full ownership of the plumbing necessary to
+//!   wake the task from another thread. These must be stored in an [InternalWakers] collection
+//!   that is owned by a [Shared] task structure.
 
-use crate::{lock::RwLock, Shared};
+#![warn(clippy::undocumented_unsafe_blocks)]
+
+use crate::{lock::RwLock, pin_vec::PinVec, Shared};
 use std::{
     cell::UnsafeCell,
     mem::{self, ManuallyDrop},
@@ -15,7 +20,7 @@ use std::{
 };
 
 /// Wrap the current context in one that updates the local WakeSet.
-/// This takes the shared data by reference and reuses the `INTERNALS_VTABLE`.
+/// This takes the shared data by reference and uses `RefWaker::VTABLE`.
 ///
 /// It works because we don't drop the waker inside of this function.
 pub(crate) fn poll_with_ref<F, R>(shared: &Arc<Shared>, index: usize, f: F) -> R
@@ -25,6 +30,7 @@ where
     // Need to assigned owned a fixed location, so do not move it from here for the duration of the poll.
     let internals = RefWaker { shared, index };
 
+    // Safety: as_raw_waker() returns an object that upholds the right RawWaker contract.
     let waker = unsafe { Waker::from_raw(internals.as_raw_waker()) };
     let mut cx = Context::from_waker(&waker);
     f(&mut cx)
@@ -32,7 +38,7 @@ where
 
 /// A waker that references the [Shared] waker data by reference
 ///
-/// When cloned it converts to an [Internals] waker.
+/// When cloned it converts to an [InternalWaker].
 struct RefWaker<'a> {
     shared: &'a Arc<Shared>,
     index: usize,
@@ -46,16 +52,25 @@ impl<'a> RefWaker<'a> {
         Self::drop,
     );
 
+    /// Convert a raw pointer into a reference to Self
+    ///
+    /// Meant to be used at the start of the different vtable functions
+    ///
+    /// Safety: The passed in pointer must actually be a pointer to Self.
+    unsafe fn from_ptr<'b>(this: *const ()) -> &'b Self {
+        &*(this as *const Self)
+    }
+
+    /// Promotes this RefWaker into an InternalWaker owned by the Shared task state
     fn clone(this: *const ()) -> RawWaker {
         // Safety: clone is called through the vtable, so we know this is a pointer to Self.
-        let this = unsafe { &*(this as *const Self) };
-        let internals = this.shared.get_waker(this.index);
-        RawWaker::new(unsafe { mem::transmute(internals) }, INTERNALS_VTABLE)
+        let this = unsafe { Self::from_ptr(this) };
+        InternalWakerRef::get_shared_waker(this.shared, this.index).into()
     }
 
     fn wake_by_ref(this: *const ()) {
         // Safety: wake_by_ref is called through the vtable, so we know this is a pointer to Self.
-        let this = unsafe { &*(this as *const Self) };
+        let this = unsafe { Self::from_ptr(this) };
         this.shared.wake_set.wake(this.index);
         this.shared.waker.wake_by_ref();
     }
@@ -70,54 +85,113 @@ impl<'a> RefWaker<'a> {
     }
 }
 
-static INTERNALS_VTABLE: &RawWakerVTable = &RawWakerVTable::new(
-    InternalWaker::clone_unchecked,
-    InternalWaker::wake_unchecked,
-    InternalWaker::wake_by_ref_unchecked,
-    InternalWaker::drop_unchecked,
-);
+pub(crate) struct InternalWakers {
+    wakers: parking_lot::RwLock<PinVec<InternalWaker>>,
+}
 
-pub(crate) struct InternalWaker {
-    /// A pointer to the Shared task data.
+impl InternalWakers {
+    pub fn new() -> Self {
+        Self {
+            wakers: parking_lot::RwLock::new(PinVec::new()),
+        }
+    }
+}
+
+struct InternalWaker {
+    /// A pointer to the [Shared] task data.
     ///
     /// This is actually an Arc, so it's possible to do increment_strong_count and
     /// decrement_strong_count on it.
+    ///
+    /// Note that the [InternalWaker] itself doesn't have a strong reference to [Shared], because
+    /// the [InternalWaker] is assumed to be contained in the [Shared] via [InternalWakers]. Using
+    /// a strong reference would create a cycle leading to the [Shared] and all its wakers leaking.
+    ///
+    /// Instead, we increment and decrement the ref count on [Shared] when creating and dropping
+    /// an [InternalWakerRef] that refers to this waker. This is done so that cloning an
+    /// [InternalWaker] (technically cloning an [InternalWakerRef]) can be done without any new
+    /// heap allocations.
     shared: *const Shared,
-    pub(crate) index: usize,
+    /// The index of the task this waker will wake.
+    index: usize,
 }
 
 impl InternalWaker {
     /// Construct a new waker.
-    pub(crate) fn new(shared: *const Shared, index: usize) -> Self {
+    fn new(shared: *const Shared, index: usize) -> Self {
         Self { shared, index }
     }
 
-    pub fn as_internal_ref(&self) -> InternalWakerRef {
-        unsafe {
-            // Safety: self.shared is an Arc, and this will be decremented again int
-            // InternalWakerRef::drop.
-            Arc::increment_strong_count(self.shared);
-            InternalWakerRef(self)
+    fn as_internal_ref(&self) -> InternalWakerRef {
+        InternalWakerRef::from_waker(self)
+    }
+
+    fn shared(&self) -> &Shared {
+        // Safety: self.shared is known to point to a valid Shared by construction
+        unsafe { &*self.shared }
+    }
+}
+
+#[repr(transparent)]
+struct InternalWakerRef(*const InternalWaker);
+
+impl InternalWakerRef {
+    fn get_shared_waker(shared: &Arc<Shared>, index: usize) -> Self {
+        {
+            let all_wakers = shared.all_wakers.wakers.read();
+            if let Some(waker) = all_wakers.get(index) {
+                return waker.as_internal_ref();
+            }
+        }
+        let mut all_wakers = shared.all_wakers.wakers.write();
+        if let Some(waker) = all_wakers.get(index) {
+            waker.as_internal_ref()
+        } else {
+            let len = all_wakers.len();
+            all_wakers.extend((len..index + 1).map(|i| InternalWaker::new(Arc::as_ptr(shared), i)));
+            debug_assert_eq!(all_wakers[index].index, index);
+            all_wakers[index].as_internal_ref()
         }
     }
 
+    fn from_waker(waker: &InternalWaker) -> Self {
+        // Safety: self.shared is an Arc, and this will be decremented again int
+        // InternalWakerRef::drop.
+        unsafe {
+            Arc::increment_strong_count(waker.shared);
+        }
+        InternalWakerRef(waker)
+    }
+
+    fn internals(&self) -> &InternalWaker {
+        // Safety: InternalWakerRef points to an InternalWaker by construction
+        unsafe { &*self.0 }
+    }
+
+    const VTABLE: &'static RawWakerVTable = &RawWakerVTable::new(
+        Self::clone_unchecked,
+        Self::wake_unchecked,
+        Self::wake_by_ref_unchecked,
+        Self::drop_unchecked,
+    );
+
     unsafe fn clone_unchecked(ptr: *const ()) -> RawWaker {
         let this: ManuallyDrop<InternalWakerRef> = mem::transmute(ptr);
-        RawWaker::new(mem::transmute(this.clone()), INTERNALS_VTABLE)
+        (*this).clone().into()
     }
 
     unsafe fn wake_by_ref_unchecked(this: *const ()) {
         let this: ManuallyDrop<InternalWakerRef> = mem::transmute(this);
-        let shared = &*(*this.0).shared;
-        shared.wake_set.wake((*this.0).index);
-        shared.waker.wake_by_ref();
+        let internals = this.internals();
+        internals.shared().wake_set.wake(internals.index);
+        internals.shared().waker.wake_by_ref();
     }
 
     unsafe fn wake_unchecked(this: *const ()) {
         let this: InternalWakerRef = mem::transmute(this);
-        let shared = &*(*this.0).shared;
-        shared.wake_set.wake((*this.0).index);
-        shared.waker.wake_by_ref();
+        let internals = this.internals();
+        internals.shared().wake_set.wake(internals.index);
+        internals.shared().waker.wake_by_ref();
     }
 
     unsafe fn drop_unchecked(this: *const ()) {
@@ -125,8 +199,13 @@ impl InternalWaker {
     }
 }
 
-#[repr(transparent)]
-pub(crate) struct InternalWakerRef(*const InternalWaker);
+impl From<InternalWakerRef> for RawWaker {
+    fn from(val: InternalWakerRef) -> Self {
+        let waker = RawWaker::new(val.0 as *const _, InternalWakerRef::VTABLE);
+        mem::forget(val); // val will be dropped from RawWaker's vtable
+        waker
+    }
+}
 
 impl Clone for InternalWakerRef {
     fn clone(&self) -> Self {
@@ -139,10 +218,9 @@ impl Clone for InternalWakerRef {
 
 impl Drop for InternalWakerRef {
     fn drop(&mut self) {
-        unsafe {
-            let internal = &*self.0;
-            Arc::decrement_strong_count(&*internal.shared)
-        }
+        // Safety: internals.shared is actually an Arc<Shared>. The ref count was incremented
+        // when self was constructed, so now we clean it up
+        unsafe { Arc::decrement_strong_count(self.internals().shared) }
     }
 }
 
@@ -163,6 +241,7 @@ impl SharedWaker {
     /// Wake the shared waker by ref.
     pub(crate) fn wake_by_ref(&self) {
         if let Some(_guard) = self.lock.try_lock_shared() {
+            // Safety: We can access the unsafe cell because we are holding the lock
             let waker = unsafe { &*self.waker.get() };
             waker.wake_by_ref();
         }
@@ -203,6 +282,7 @@ impl SharedWaker {
 
 /// Create a waker which does nothing.
 fn noop_waker() -> Waker {
+    // Safety: noop_raw_waker() returns an object that upholds the right RawWaker contract.
     unsafe { Waker::from_raw(noop_raw_waker()) }
 }
 
@@ -378,13 +458,19 @@ mod test {
     impl<T> FakeDynFuture<T> {
         fn new<F: Future<Output = T>>(fut: F) -> Self {
             Self {
-                future: unsafe { mem::transmute(Box::pin(fut)) },
+                future: Box::into_raw(Box::new(fut)) as *const _,
                 poll_fn: |this, cx| {
+                    // Safety: this is self.future (see the poll implementation below), which
+                    // is a Box<F>. Boxes never move, so we can treat it as a pinned reference.
                     let this = unsafe { mem::transmute::<_, Pin<&mut F>>(this) };
                     this.poll(cx)
                 },
-                drop_fn: |this| unsafe {
-                    mem::transmute::<_, Pin<Box<F>>>(this);
+                drop_fn: |this| {
+                    // Safety: this is self.future (see the drop implementation below), which is a
+                    // Box<F>.
+                    unsafe {
+                        mem::transmute::<_, Pin<Box<F>>>(this);
+                    }
                 },
             }
         }

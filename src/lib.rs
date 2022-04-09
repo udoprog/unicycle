@@ -158,8 +158,6 @@ use self::wake_set::{SharedWakeSet, WakeSet};
 use self::waker::SharedWaker;
 #[cfg(feature = "futures-rs")]
 use futures_core::{FusedStream, Stream};
-use parking_lot::RwLock;
-use pin_vec::PinVec;
 use std::{
     future::Future,
     iter, marker, mem,
@@ -169,7 +167,7 @@ use std::{
     task::{Context, Poll},
 };
 use uniset::BitSet;
-use waker::{InternalWaker, InternalWakerRef};
+use waker::InternalWakers;
 
 mod lock;
 pub mod pin_slab;
@@ -218,8 +216,8 @@ struct Shared {
     waker: SharedWaker,
     /// The currently registered wake set.
     wake_set: SharedWakeSet,
-
-    all_wakers: RwLock<PinVec<InternalWaker>>,
+    /// The collection of all wakers currently or previously in use.
+    all_wakers: InternalWakers,
 }
 
 impl Shared {
@@ -228,7 +226,7 @@ impl Shared {
         Self {
             waker: SharedWaker::new(),
             wake_set: SharedWakeSet::new(),
-            all_wakers: RwLock::new(PinVec::new()),
+            all_wakers: InternalWakers::new(),
         }
     }
 
@@ -307,30 +305,6 @@ impl Shared {
         // Safety: While this is live we must _not_ mess with
         // `alternate` in any way.
         (**alternate).as_mut_set()
-    }
-
-    fn get_waker(&self, index: usize) -> InternalWakerRef {
-        {
-            let all_wakers = self.all_wakers.read();
-            if let Some(waker) = all_wakers.get(index) {
-                return waker.as_internal_ref();
-            }
-        }
-        let mut all_wakers = self.all_wakers.write();
-        if let Some(waker) = all_wakers.get(index) {
-            waker.as_internal_ref()
-        } else {
-            let len = all_wakers.len();
-            all_wakers.extend((len..index + 1).map(|i| InternalWaker::new(self, i)));
-            debug_assert_eq!(all_wakers[index].index, index);
-            all_wakers[index].as_internal_ref()
-        }
-    }
-}
-
-impl Drop for Shared {
-    fn drop(&mut self) {
-        println!("Dropping Shared")
     }
 }
 
