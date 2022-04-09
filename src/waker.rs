@@ -86,13 +86,13 @@ impl<'a> RefWaker<'a> {
 }
 
 pub(crate) struct InternalWakers {
-    wakers: parking_lot::RwLock<PinVec<InternalWaker>>,
+    wakers: parking_lot::Mutex<PinVec<InternalWaker>>,
 }
 
 impl InternalWakers {
     pub fn new() -> Self {
         Self {
-            wakers: parking_lot::RwLock::new(PinVec::new()),
+            wakers: parking_lot::Mutex::new(PinVec::new()),
         }
     }
 }
@@ -137,21 +137,13 @@ struct InternalWakerRef(*const InternalWaker);
 
 impl InternalWakerRef {
     fn get_shared_waker(shared: &Arc<Shared>, index: usize) -> Self {
-        {
-            let all_wakers = shared.all_wakers.wakers.read();
-            if let Some(waker) = all_wakers.get(index) {
-                return waker.as_internal_ref();
-            }
-        }
-        let mut all_wakers = shared.all_wakers.wakers.write();
-        if let Some(waker) = all_wakers.get(index) {
-            waker.as_internal_ref()
-        } else {
+        let mut all_wakers = shared.all_wakers.wakers.lock();
+        if all_wakers.len() <= index {
             let len = all_wakers.len();
             all_wakers.extend((len..index + 1).map(|i| InternalWaker::new(Arc::as_ptr(shared), i)));
-            debug_assert_eq!(all_wakers[index].index, index);
-            all_wakers[index].as_internal_ref()
         }
+
+        all_wakers[index].as_internal_ref()
     }
 
     fn from_waker(waker: &InternalWaker) -> Self {
