@@ -159,6 +159,7 @@ use self::waker::SharedWaker;
 #[cfg(feature = "futures-rs")]
 use futures_core::{FusedStream, Stream};
 use parking_lot::RwLock;
+use pin_vec::PinVec;
 use std::{
     future::Future,
     iter, marker, mem,
@@ -172,6 +173,7 @@ use waker::{InternalWaker, InternalWakerRef};
 
 mod lock;
 pub mod pin_slab;
+mod pin_vec;
 mod wake_set;
 mod waker;
 
@@ -217,7 +219,7 @@ struct Shared {
     /// The currently registered wake set.
     wake_set: SharedWakeSet,
 
-    all_wakers: RwLock<Vec<InternalWaker>>,
+    all_wakers: RwLock<PinVec<InternalWaker>>,
 }
 
 impl Shared {
@@ -226,7 +228,7 @@ impl Shared {
         Self {
             waker: SharedWaker::new(),
             wake_set: SharedWakeSet::new(),
-            all_wakers: RwLock::new(Vec::new()),
+            all_wakers: RwLock::new(PinVec::new()),
         }
     }
 
