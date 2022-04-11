@@ -12,9 +12,9 @@ pub fn polling_benchmark(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("unicycle", i), i, |b, i| {
                 b.iter(|| unicycle(*i, 1))
             });
-            group.bench_with_input(BenchmarkId::new("futures-rs", i), i, |b, i| {
-                b.iter(|| futures_rs(*i, 1))
-            });
+            // group.bench_with_input(BenchmarkId::new("futures-rs", i), i, |b, i| {
+            //     b.iter(|| futures_rs(*i, 1))
+            // });
         }
     }
 
@@ -25,9 +25,9 @@ pub fn polling_benchmark(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("unicycle", i), i, |b, i| {
                 b.iter(|| unicycle(10000, *i))
             });
-            group.bench_with_input(BenchmarkId::new("futures-rs", i), i, |b, i| {
-                b.iter(|| futures_rs(10000, *i))
-            });
+            // group.bench_with_input(BenchmarkId::new("futures-rs", i), i, |b, i| {
+            //     b.iter(|| futures_rs(10000, *i))
+            // });
         }
     }
 
