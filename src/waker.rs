@@ -28,11 +28,11 @@ where
     F: FnOnce(&mut Context<'_>) -> R,
 {
     // Need to assigned owned a fixed location, so do not move it from here for the duration of the poll.
-    let internals =
-        InternalWaker::new_on_stack(NonNull::new(Arc::as_ptr(shared) as *mut _).unwrap(), index);
+    let internals = InternalWaker::new(NonNull::new(Arc::as_ptr(shared) as *mut _).unwrap(), index);
 
     // Safety: as_raw_waker() returns an object that upholds the right RawWaker contract.
-    let waker = unsafe { Waker::from_raw(internals.as_internal_ref().into()) };
+    let waker = unsafe { Waker::from_raw(internals.as_waker_ref().into()) };
+    let waker = ManuallyDrop::new(waker);
     let mut cx = Context::from_waker(&waker);
     f(&mut cx)
 }
@@ -67,37 +67,20 @@ struct InternalWaker {
     shared: NonNull<Shared>,
     /// The index of the task this waker will wake.
     index: usize,
-    /// Indicates whether references to this waker need to be dropped.
-    ///
-    /// This is primarily a way to distinguished [InternalWakers]s stored on the stack from
-    /// those stored in an [InternalWakers] collection. The references to wakers in
-    /// [InternalWakers] increment the ref count on the `Arc<Shared>` holding them, so the ref
-    /// count needs to be decremented when the reference is destroyed.
-    needs_drop: bool,
 }
 
 impl InternalWaker {
     /// Construct a new waker.
     fn new(shared: NonNull<Shared>, index: usize) -> Self {
-        Self {
-            shared,
-            index,
-            needs_drop: true,
-        }
+        Self { shared, index }
     }
 
-    /// Constructs a new waker that is stored on the stack, and therefore references
-    /// to it should not manipulate the ref count.
-    fn new_on_stack(shared: NonNull<Shared>, index: usize) -> Self {
-        Self {
-            shared,
-            index,
-            needs_drop: false,
-        }
-    }
-
-    fn as_internal_ref(&self) -> InternalWakerRef {
+    fn as_shared_waker_ref(&self) -> InternalWakerRef {
         InternalWakerRef::from_waker(self)
+    }
+
+    fn as_waker_ref(&self) -> InternalWakerRef {
+        InternalWakerRef(self)
     }
 
     fn shared(&self) -> &Shared {
@@ -117,16 +100,12 @@ impl InternalWakerRef {
             all_wakers.extend((len..index + 1).map(|i| InternalWaker::new(shared.into(), i)));
         }
 
-        all_wakers[index].as_internal_ref()
+        all_wakers[index].as_shared_waker_ref()
     }
 
     fn from_waker(waker: &InternalWaker) -> Self {
-        if waker.needs_drop {
-            // Safety: self.shared is an Arc, and this will be decremented again int
-            // InternalWakerRef::drop.
-            unsafe {
-                Arc::increment_strong_count(waker.shared.as_ptr());
-            }
+        unsafe {
+            Arc::increment_strong_count(waker.shared.as_ptr());
         }
         InternalWakerRef(waker)
     }
@@ -145,16 +124,11 @@ impl InternalWakerRef {
 
     unsafe fn clone_unchecked(ptr: *const ()) -> RawWaker {
         let this: ManuallyDrop<InternalWakerRef> = mem::transmute(ptr);
-        if this.internals().needs_drop {
-            Arc::increment_strong_count(this.internals().shared.as_ptr());
-            RawWaker::new(ptr, Self::VTABLE)
-        } else {
-            InternalWakerRef::get_shared_waker(
-                &*(this.internals().shared.as_ptr()),
-                this.internals().index,
-            )
-            .into()
-        }
+        InternalWakerRef::get_shared_waker(
+            &*(this.internals().shared.as_ptr()),
+            this.internals().index,
+        )
+        .into()
     }
 
     unsafe fn wake_by_ref_unchecked(this: *const ()) {
@@ -186,11 +160,9 @@ impl From<InternalWakerRef> for RawWaker {
 
 impl Drop for InternalWakerRef {
     fn drop(&mut self) {
-        if self.internals().needs_drop {
-            // Safety: internals.shared is actually an Arc<Shared>. The ref count was incremented
-            // when self was constructed, so now we clean it up
-            unsafe { Arc::decrement_strong_count(self.internals().shared.as_ptr()) }
-        }
+        // Safety: internals.shared is actually an Arc<Shared>. The ref count was incremented
+        // when self was constructed, so now we clean it up
+        unsafe { Arc::decrement_strong_count(self.internals().shared.as_ptr()) }
     }
 }
 
