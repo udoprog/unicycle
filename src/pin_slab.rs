@@ -19,13 +19,9 @@
 //! assert!(!slab.remove(index));
 //! ```
 
-use std::{mem, pin::Pin};
+use std::pin::Pin;
 
-// Size of the first slot.
-const FIRST_SLOT_SIZE: usize = 16;
-// The initial number of bits to ignore for the first slot.
-const FIRST_SLOT_MASK: usize =
-    std::mem::size_of::<usize>() * 8 - FIRST_SLOT_SIZE.leading_zeros() as usize - 1;
+use crate::pin_vec::PinVec;
 
 /// Pre-allocated storage for a uniform data type, with slots of immovable
 /// memory regions.
@@ -63,10 +59,7 @@ const FIRST_SLOT_MASK: usize =
 /// assert_send(&slab);
 /// ```
 pub struct PinSlab<T> {
-    // Slots of memory. Once one has been allocated it is never moved.
-    // This allows us to store entries in there and fetch them as `Pin<&mut T>`.
-    slots: Vec<Box<[Entry<T>]>>,
-    // Number of Filled elements currently in the slab
+    entries: PinVec<Entry<T>>,
     len: usize,
     // Offset of the next available slot in the slab.
     next: usize,
@@ -99,9 +92,9 @@ impl<T> PinSlab<T> {
     /// ```
     pub fn new() -> Self {
         Self {
-            slots: Vec::new(),
-            next: 0,
+            entries: PinVec::new(),
             len: 0,
+            next: 0,
         }
     }
 
@@ -190,33 +183,19 @@ impl<T> PinSlab<T> {
     /// Get a mutable reference to the value at the given slot.
     #[inline(always)]
     fn internal_get_mut(&mut self, key: usize) -> Option<&mut T> {
-        let (slot, offset, len) = calculate_key(key);
-        let slot = self.slots.get_mut(slot)?;
-
-        debug_assert!(offset < len);
-
-        let entry = match &mut slot[offset] {
-            Entry::Occupied(entry) => entry,
-            _ => return None,
-        };
-
-        Some(entry)
+        self.entries.get_mut(key).and_then(|entry| match entry {
+            Entry::Occupied(entry) => Some(entry),
+            _ => None,
+        })
     }
 
     /// Get a reference to the value at the given slot.
     #[inline(always)]
     fn internal_get(&mut self, key: usize) -> Option<&T> {
-        let (slot, offset, len) = calculate_key(key);
-        let slot = self.slots.get(slot)?;
-
-        debug_assert!(offset < len);
-
-        let entry = match &slot[offset] {
-            Entry::Occupied(entry) => entry,
-            _ => return None,
-        };
-
-        Some(entry)
+        self.entries.get(key).and_then(|entry| match entry {
+            Entry::Occupied(entry) => Some(entry),
+            _ => None,
+        })
     }
 
     /// Remove the key from the slab.
@@ -241,15 +220,10 @@ impl<T> PinSlab<T> {
     /// assert!(!slab.remove(index));
     /// ```
     pub fn remove(&mut self, key: usize) -> bool {
-        let (slot, offset, len) = calculate_key(key);
-
-        let slot = match self.slots.get_mut(slot) {
-            Some(slot) => slot,
+        let entry = match self.entries.get_mut(key) {
+            Some(entry) => entry,
             None => return false,
         };
-
-        debug_assert!(offset < len);
-        let entry = &mut slot[offset];
 
         match entry {
             Entry::Occupied(..) => (),
@@ -276,40 +250,26 @@ impl<T> PinSlab<T> {
     /// assert!(slab.get(0).is_none());
     /// ```
     pub fn clear(&mut self) {
-        self.slots.clear()
-    }
-
-    /// Construct a new slot and store it in `self.slots`.
-    fn new_slot(&mut self, len: usize) -> &mut Box<[Entry<T>]> {
-        let d = (0..len).map(|_| Entry::None).collect();
-
-        self.slots.push(d);
-        self.slots.last_mut().unwrap()
+        self.entries.clear()
     }
 
     /// Insert a value at the given slot.
     fn insert_at(&mut self, key: usize, val: T) {
-        let (slot, offset, len) = calculate_key(key);
-
-        if let Some(slot) = self.slots.get_mut(slot) {
-            debug_assert!(offset < len);
-            let entry = &mut slot[offset];
-
-            self.next = match *entry {
-                Entry::None => key + 1,
-                Entry::Vacant(next) => next,
-                // NB: unreachable because insert_at is an internal function,
-                // which can only be appropriately called on non-occupied
-                // entries. This is however, not a safety concern.
-                _ => unreachable!(),
-            };
-
-            *entry = Entry::Occupied(val);
-        } else {
-            let slot = self.new_slot(len);
-            slot[0] = Entry::Occupied(val);
-            self.next = key + 1;
+        if key >= self.entries.len() {
+            self.entries
+                .extend((self.entries.len()..=key).map(|_| Entry::None));
         }
+        let entry = &mut self.entries[key];
+        self.next = match *entry {
+            Entry::None => key + 1,
+            Entry::Vacant(next) => next,
+            // NB: unreachable because insert_at is an internal function,
+            // which can only be appropriately called on non-occupied
+            // entries. This is however, not a safety concern.
+            _ => unreachable!(),
+        };
+
+        *entry = Entry::Occupied(val);
 
         self.len += 1;
     }
@@ -327,44 +287,12 @@ impl<T> Drop for PinSlab<T> {
     }
 }
 
-/// Calculate the key as a (slot, offset, len) tuple.
-const fn calculate_key(key: usize) -> (usize, usize, usize) {
-    assert!(key < (1usize << (mem::size_of::<usize>() * 8 - 1)));
-
-    let slot = ((mem::size_of::<usize>() * 8) as usize - key.leading_zeros() as usize)
-        .saturating_sub(FIRST_SLOT_MASK);
-
-    let (start, end) = if key < FIRST_SLOT_SIZE {
-        (0, FIRST_SLOT_SIZE)
-    } else {
-        (FIRST_SLOT_SIZE << (slot - 1), FIRST_SLOT_SIZE << slot)
-    };
-
-    (slot, key - start, end - start)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{calculate_key, PinSlab};
+    use super::PinSlab;
 
     #[global_allocator]
     static ALLOCATOR: checkers::Allocator = checkers::Allocator::system();
-
-    #[test]
-    fn key_test() {
-        // NB: range of the first slot.
-        assert_eq!((0, 0, 16), calculate_key(0));
-        assert_eq!((0, 15, 16), calculate_key(15));
-
-        for i in 4..=62 {
-            let end_range = 1usize << i;
-            assert_eq!((i - 3, 0, end_range), calculate_key(end_range));
-            assert_eq!(
-                (i - 3, end_range - 1, end_range),
-                calculate_key((1usize << (i + 1)) - 1)
-            );
-        }
-    }
 
     #[checkers::test]
     fn insert_get_remove_many() {

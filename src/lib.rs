@@ -167,9 +167,11 @@ use std::{
     task::{Context, Poll},
 };
 use uniset::BitSet;
+use waker::InternalWakers;
 
 mod lock;
 pub mod pin_slab;
+mod pin_vec;
 mod wake_set;
 mod waker;
 
@@ -214,6 +216,8 @@ struct Shared {
     waker: SharedWaker,
     /// The currently registered wake set.
     wake_set: SharedWakeSet,
+    /// The collection of all wakers currently or previously in use.
+    all_wakers: InternalWakers,
 }
 
 impl Shared {
@@ -222,6 +226,7 @@ impl Shared {
         Self {
             waker: SharedWaker::new(),
             wake_set: SharedWakeSet::new(),
+            all_wakers: InternalWakers::new(),
         }
     }
 
