@@ -1,7 +1,5 @@
-use std::{
-    mem::{self, MaybeUninit},
-    ops::{Index, IndexMut},
-};
+use std::mem::{self, MaybeUninit};
+use std::ops::{Index, IndexMut};
 
 pub struct PinVec<T> {
     // Slots of memory. Once one has been allocated it is never moved.
