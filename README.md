@@ -100,7 +100,7 @@ abnormally]. This issue was [reported by Jon Gjengset] and is improved on by
 
 Unicycle addresses this by limiting how frequently a child task may be
 polled per _polling cycle_. This is done by tracking polling interest in two
-separate sets. Once we are polled, we swap out the active set, then take the
+separate sets. Once we are polled, we swap out the active set then take the
 swapped out set and use as a basis for what to poll in order while limiting
 ourselves to only poll _once_ per child task. Additional wakeups are only
 registered in the swapped in set which will be polled the next cycle.
@@ -144,11 +144,13 @@ we start the cycle over again.
 [limiting the amount FuturesUnordered is allowed to spin]: https://github.com/rust-lang/futures-rs/pull/2049
 [parking_lot]: https://crates.io/crates/parking_lot
 [pin API]: https://doc.rust-lang.org/std/pin/index.html
+[PinSlab]: https://docs.rs/unicycle/latest/unicycle/pin_slab/struct.PinSlab.html
 [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
 [reported by Jon Gjengset]: https://github.com/rust-lang/futures-rs/issues/2047
 [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
 [slab]: https://github.com/carllerche/slab
 [spin abnormally]: https://github.com/udoprog/unicycle/blob/master/tests/spinning_futures_unordered.rs
 [StreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.StreamsUnordered.html
+[Unordered]: https://docs.rs/unicycle/latest/unicycle/struct.Unordered.html
 
 License: MIT/Apache-2.0
