@@ -178,7 +178,7 @@ use self::waker::SharedWaker;
 #[cfg(feature = "futures-rs")]
 use futures_core::{FusedStream, Stream};
 
-/// Our very own homebade `ready!` impl.
+/// Our very own homemade `ready!` impl.
 macro_rules! ready {
     ($expr:expr) => {
         match $expr {
