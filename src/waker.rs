@@ -10,14 +10,13 @@
 
 #![warn(clippy::undocumented_unsafe_blocks)]
 
+use std::cell::UnsafeCell;
+use std::mem::{self, ManuallyDrop};
+use std::ptr::{self, NonNull};
+use std::sync::Arc;
+use std::task::{Context, RawWaker, RawWakerVTable, Waker};
+
 use crate::{lock::RwLock, pin_vec::PinVec, Shared};
-use std::{
-    cell::UnsafeCell,
-    mem::{self, ManuallyDrop},
-    ptr::{self, NonNull},
-    sync::Arc,
-    task::{Context, RawWaker, RawWakerVTable, Waker},
-};
 
 /// Wrap the current context in one that updates the local WakeSet.
 /// This takes the shared data by reference and uses `RefWaker::VTABLE`.

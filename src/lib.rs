@@ -155,27 +155,28 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(rustdoc::broken_intra_doc_links)]
 
-use self::pin_slab::PinSlab;
-use self::wake_set::{SharedWakeSet, WakeSet};
-use self::waker::SharedWaker;
-#[cfg(feature = "futures-rs")]
-use futures_core::{FusedStream, Stream};
-use std::{
-    future::Future,
-    iter, marker, mem,
-    pin::Pin,
-    ptr,
-    sync::Arc,
-    task::{Context, Poll},
-};
-use uniset::BitSet;
-use waker::InternalWakers;
-
 mod lock;
 pub mod pin_slab;
 mod pin_vec;
 mod wake_set;
 mod waker;
+
+use std::future::Future;
+use std::iter;
+use std::marker;
+use std::mem;
+use std::pin::Pin;
+use std::ptr;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use uniset::BitSet;
+use waker::InternalWakers;
+
+use self::pin_slab::PinSlab;
+use self::wake_set::{SharedWakeSet, WakeSet};
+use self::waker::SharedWaker;
+#[cfg(feature = "futures-rs")]
+use futures_core::{FusedStream, Stream};
 
 /// Our very own homebade `ready!` impl.
 macro_rules! ready {
