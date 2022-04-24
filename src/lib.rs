@@ -269,9 +269,8 @@ impl Shared {
         Poll::Ready((non_empty, wake_set))
     }
 
-    /// Perform the actual swap of the active sets.
-    /// This is safe, because we perform the appropriate locking while swapping
-    /// the sets.
+    /// Perform a swap of the active sets. This is safe, because we perform the
+    /// appropriate locking while swapping the sets.
     ///
     /// # Safety
     ///
