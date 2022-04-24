@@ -27,7 +27,7 @@ where
     F: FnOnce(&mut Context<'_>) -> R,
 {
     // Need to assigned owned a fixed location, so do not move it from here for the duration of the poll.
-    let internals = InternalWaker::new(NonNull::new(Arc::as_ptr(shared) as *mut _).unwrap(), index);
+    let internals = InternalWaker::new(NonNull::from(shared.as_ref()), index);
 
     // Safety: as_raw_waker() returns an object that upholds the right RawWaker contract.
     let waker = unsafe { Waker::from_raw(internals.as_waker_ref().into()) };
