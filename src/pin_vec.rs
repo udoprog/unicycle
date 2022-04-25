@@ -1,5 +1,6 @@
 use std::mem::{self, MaybeUninit};
 use std::ops::{Index, IndexMut};
+use std::ptr::drop_in_place;
 
 pub struct PinVec<T> {
     // Slots of memory. Once one has been allocated it is never moved.
@@ -22,6 +23,12 @@ impl<T> PinVec<T> {
     }
 
     pub fn clear(&mut self) {
+        for i in 0..self.len {
+            // Safety: we know the pointer is initialized because its index is in bounds, and it
+            // can be dropped because we are emptying the container, which means these contents
+            // will not be accessed again.
+            unsafe { drop_in_place(self.get_mut(i).unwrap()) }
+        }
         self.slots.clear();
         self.len = 0;
     }
@@ -63,6 +70,12 @@ impl<T> PinVec<T> {
         for item in items {
             self.push(item)
         }
+    }
+}
+
+impl<T> Drop for PinVec<T> {
+    fn drop(&mut self) {
+        self.clear();
     }
 }
 

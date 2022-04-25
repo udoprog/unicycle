@@ -281,12 +281,6 @@ impl<T> Default for PinSlab<T> {
     }
 }
 
-impl<T> Drop for PinSlab<T> {
-    fn drop(&mut self) {
-        self.clear();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::PinSlab;
