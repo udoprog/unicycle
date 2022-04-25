@@ -81,7 +81,7 @@ impl InternalWaker {
     }
 
     fn as_waker_ref(&self) -> InternalWakerRef {
-        InternalWakerRef(self)
+        InternalWakerRef(NonNull::from(self))
     }
 
     fn shared(&self) -> &Shared {
@@ -91,7 +91,7 @@ impl InternalWaker {
 }
 
 #[repr(transparent)]
-struct InternalWakerRef(*const InternalWaker);
+struct InternalWakerRef(NonNull<InternalWaker>);
 
 impl InternalWakerRef {
     fn get_shared_waker(shared: &Shared, index: usize) -> Self {
@@ -108,12 +108,12 @@ impl InternalWakerRef {
         unsafe {
             Arc::increment_strong_count(waker.shared.as_ptr());
         }
-        InternalWakerRef(waker)
+        InternalWakerRef(NonNull::from(waker))
     }
 
     fn internals(&self) -> &InternalWaker {
         // Safety: InternalWakerRef points to an InternalWaker by construction
-        unsafe { &*self.0 }
+        unsafe { self.0.as_ref() }
     }
 
     const VTABLE: &'static RawWakerVTable = &RawWakerVTable::new(
@@ -153,7 +153,7 @@ impl InternalWakerRef {
 
 impl From<InternalWakerRef> for RawWaker {
     fn from(val: InternalWakerRef) -> Self {
-        let waker = RawWaker::new(val.0 as *const _, InternalWakerRef::VTABLE);
+        let waker = RawWaker::new(val.0.as_ptr() as *const _, InternalWakerRef::VTABLE);
         mem::forget(val); // val will be dropped from RawWaker's vtable
         waker
     }
