@@ -1,11 +1,12 @@
 use std::mem::{self, MaybeUninit};
 use std::ops::{Index, IndexMut};
+use std::pin::Pin;
 use std::ptr::drop_in_place;
 
 pub struct PinVec<T> {
     // Slots of memory. Once one has been allocated it is never moved.
     // This allows us to store entries in there and fetch them as `Pin<&mut T>`.
-    slots: Vec<Box<[MaybeUninit<T>]>>,
+    slots: Vec<Pin<Box<[MaybeUninit<T>]>>>,
     // Number of Filled elements currently in the slab
     len: usize,
 }
@@ -26,14 +27,17 @@ impl<T> PinVec<T> {
         if mem::needs_drop::<T>() {
             let (last_slot, offset, _) = calculate_key(self.len());
             for (i, mut slot) in self.slots.drain(..).enumerate() {
-                let slice: &mut [MaybeUninit<T>] = if i < last_slot {
-                    &mut *slot
-                } else {
-                    &mut slot[0..offset]
-                };
-                // Safety: we initialized slice to only point to the already-initialized elements.
-                // It's safe to drop_in_place because we are draining the Vec.
+                // Safety:
+                //   1. Although we do Pin::get_unchecked_mut, we do not actually move the value
+                //   2. We initialized slice to only point to the already-initialized elements.
+                //   3. It's safe to drop_in_place because we are draining the Vec.
                 unsafe {
+                    let slot = Pin::as_mut(&mut slot).get_unchecked_mut();
+                    let slice: &mut [MaybeUninit<T>] = if i < last_slot {
+                        &mut *slot
+                    } else {
+                        &mut slot[0..offset]
+                    };
                     let slice: &mut [T] = mem::transmute(slice);
                     drop_in_place(slice);
                 }
@@ -55,13 +59,38 @@ impl<T> PinVec<T> {
         }
     }
 
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T>
+    where
+        T: Unpin,
+    {
+        // Safety: get_unchecked_mut lets us ignore the Pin part, but since T is Unpin
+        // it's okay to Unpin it.
+        unsafe { self.get_unchecked_mut(index) }
+    }
+
+    /// Return a mutable reference to the given entry
+    ///
+    /// # Safety:
+    /// Callers must ensure that the value pointed to by the return value is not moved.
+    pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> Option<&mut T> {
         if index < self.len() {
             let (slot, offset, _) = calculate_key(index);
+            // Safety: Callers must ensure they do not move the pointer returned from this
+            // function.
+            let slot = Pin::as_mut(&mut self.slots[slot]).get_unchecked_mut();
             // Safety: We guarantee that all indices <= self.len are initialized
-            unsafe { Some(self.slots[slot][offset].assume_init_mut()) }
+            Some(slot[offset].assume_init_mut())
         } else {
             None
+        }
+    }
+
+    pub fn get_pin_mut(&mut self, index: usize) -> Option<Pin<&mut T>> {
+        // Safety: The items are all pinned already. get_unchecked_mut erased the Pin
+        // that we had already, so it is safe to restore it.
+        unsafe {
+            self.get_unchecked_mut(index)
+                .map(|item| Pin::new_unchecked(item))
         }
     }
 
@@ -69,11 +98,17 @@ impl<T> PinVec<T> {
         let (slot, offset, slot_len) = calculate_key(self.len);
 
         if slot == self.slots.len() {
-            self.slots
-                .push((0..slot_len).map(|_| MaybeUninit::uninit()).collect());
+            let slot = (0..slot_len)
+                .map(|_| MaybeUninit::uninit())
+                .collect::<Box<[_]>>();
+            self.slots.push(slot.into());
         }
 
-        self.slots[slot][offset].write(item);
+        unsafe {
+            let slot = Pin::as_mut(&mut self.slots[slot]);
+            let slot = Pin::get_unchecked_mut(slot);
+            slot[offset].write(item);
+        }
 
         self.len += 1;
     }
@@ -99,7 +134,7 @@ impl<T> Index<usize> for PinVec<T> {
     }
 }
 
-impl<T> IndexMut<usize> for PinVec<T> {
+impl<T: Unpin> IndexMut<usize> for PinVec<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.get_mut(index).unwrap()
     }

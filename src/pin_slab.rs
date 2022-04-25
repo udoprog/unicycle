@@ -21,6 +21,8 @@
 
 use std::pin::Pin;
 
+use pin_project::pin_project;
+
 use crate::pin_vec::PinVec;
 
 /// Pre-allocated storage for a uniform data type, with slots of immovable
@@ -65,6 +67,7 @@ pub struct PinSlab<T> {
     next: usize,
 }
 
+#[pin_project(project = EntryProject)]
 enum Entry<T> {
     // Each slot is pre-allocated with entries of `None`.
     None,
@@ -72,7 +75,7 @@ enum Entry<T> {
     // next vacant entry.
     Vacant(usize),
     // An entry that is occupied with a value.
-    Occupied(T),
+    Occupied(#[pin] T),
 }
 
 impl<T> PinSlab<T> {
@@ -139,11 +142,12 @@ impl<T> PinSlab<T> {
 
     /// Access the given key as a pinned mutable value.
     pub fn get_pin_mut(&mut self, key: usize) -> Option<Pin<&mut T>> {
-        // Safety: all storage is pre-allocated in chunks, and each chunk
-        // doesn't move. We only provide mutators to drop the storage through
-        // `remove` (but it doesn't return it).
-        let entry = self.internal_get_mut(key)?;
-        unsafe { Some(Pin::new_unchecked(entry)) }
+        self.entries
+            .get_pin_mut(key)
+            .and_then(|entry| match entry.project() {
+                EntryProject::Occupied(entry) => Some(entry),
+                _ => None,
+            })
     }
 
     /// Get a reference to the value at the given slot.
@@ -158,7 +162,10 @@ impl<T> PinSlab<T> {
     /// assert_eq!(Some(&42), slab.get(key));
     /// ```
     pub fn get(&mut self, key: usize) -> Option<&T> {
-        self.internal_get(key)
+        self.entries.get(key).and_then(|entry| match entry {
+            Entry::Occupied(entry) => Some(entry),
+            _ => None,
+        })
     }
 
     /// Get a mutable reference to the value at the given slot.
@@ -177,22 +184,7 @@ impl<T> PinSlab<T> {
     where
         T: Unpin,
     {
-        self.internal_get_mut(key)
-    }
-
-    /// Get a mutable reference to the value at the given slot.
-    #[inline(always)]
-    fn internal_get_mut(&mut self, key: usize) -> Option<&mut T> {
         self.entries.get_mut(key).and_then(|entry| match entry {
-            Entry::Occupied(entry) => Some(entry),
-            _ => None,
-        })
-    }
-
-    /// Get a reference to the value at the given slot.
-    #[inline(always)]
-    fn internal_get(&mut self, key: usize) -> Option<&T> {
-        self.entries.get(key).and_then(|entry| match entry {
             Entry::Occupied(entry) => Some(entry),
             _ => None,
         })
@@ -220,17 +212,21 @@ impl<T> PinSlab<T> {
     /// assert!(!slab.remove(index));
     /// ```
     pub fn remove(&mut self, key: usize) -> bool {
-        let entry = match self.entries.get_mut(key) {
-            Some(entry) => entry,
-            None => return false,
-        };
+        // Safety: we get a mutable reference to Entry, but we are careful never to move it, only
+        // overwrite it in place.
+        unsafe {
+            let entry = match self.entries.get_unchecked_mut(key) {
+                Some(entry) => entry,
+                None => return false,
+            };
 
-        match entry {
-            Entry::Occupied(..) => (),
-            _ => return false,
+            match entry {
+                Entry::Occupied(..) => (),
+                _ => return false,
+            }
+
+            *entry = Entry::Vacant(self.next);
         }
-
-        *entry = Entry::Vacant(self.next);
         self.len -= 1;
         self.next = key;
 
@@ -259,18 +255,21 @@ impl<T> PinSlab<T> {
             self.entries
                 .extend((self.entries.len()..=key).map(|_| Entry::None));
         }
-        let entry = &mut self.entries[key];
-        self.next = match *entry {
-            Entry::None => key + 1,
-            Entry::Vacant(next) => next,
-            // NB: unreachable because insert_at is an internal function,
-            // which can only be appropriately called on non-occupied
-            // entries. This is however, not a safety concern.
-            _ => unreachable!(),
-        };
+        // Safety: we get an unchecked mut pointer to the entry, but we are careful
+        // to only right to it and not move from it.
+        unsafe {
+            let entry = self.entries.get_unchecked_mut(key).unwrap();
+            self.next = match *entry {
+                Entry::None => key + 1,
+                Entry::Vacant(next) => next,
+                // NB: unreachable because insert_at is an internal function,
+                // which can only be appropriately called on non-occupied
+                // entries. This is however, not a safety concern.
+                _ => unreachable!(),
+            };
 
-        *entry = Entry::Occupied(val);
-
+            *entry = Entry::Occupied(val);
+        }
         self.len += 1;
     }
 }
