@@ -1,3 +1,5 @@
+#![cfg(feature = "futures-rs")]
+
 use futures::future::poll_fn;
 use futures::stream::Stream;
 use std::cell::Cell;

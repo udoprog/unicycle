@@ -2,6 +2,27 @@
 mod internals {
     //! Manual implementation using atomics.
     use std::sync::atomic::{AtomicIsize, Ordering};
+    pub use std::sync::MutexGuard;
+
+    pub struct Mutex<T> {
+        sys: std::sync::Mutex<T>,
+    }
+
+    impl<T> Mutex<T> {
+        /// Construct a new mutex.
+        pub fn new(value: T) -> Self {
+            Self {
+                sys: std::sync::Mutex::new(value),
+            }
+        }
+    }
+
+    impl<T> Mutex<T> {
+        /// Lock the given mutex and return the guard.
+        pub fn lock(&self) -> MutexGuard<'_, T> {
+            self.sys.lock().unwrap()
+        }
+    }
 
     /// A simplified RwLock implementation which only supports voluntary locking.
     #[repr(C)]
@@ -11,21 +32,21 @@ mod internals {
 
     impl RwLock {
         /// Construct a new lock that's in an unlocked state.
-        pub const fn new() -> Self {
+        pub(crate) const fn new() -> Self {
             Self {
                 state: AtomicIsize::new(0),
             }
         }
 
         /// Construct a new lock that is already locked.
-        pub fn locked() -> Self {
+        pub(crate) fn locked() -> Self {
             Self {
                 state: AtomicIsize::new(-std::isize::MAX),
             }
         }
 
         /// Try to lock exclusively.
-        pub fn try_lock_exclusive_immediate(&self) -> bool {
+        pub(crate) fn try_lock_exclusive_immediate(&self) -> bool {
             let last = self.state.fetch_sub(std::isize::MAX, Ordering::AcqRel);
 
             if last != 0 {
@@ -45,13 +66,18 @@ mod internals {
         }
 
         /// Unlock shared access.
-        pub fn unlock_exclusive_immediate(&self) {
+        ///
+        /// # Safety
+        ///
+        /// This method may only be called if an exclusive lock is held in the
+        /// current context.
+        pub(crate) unsafe fn unlock_exclusive_immediate(&self) {
             let old = self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
             debug_assert!(old >= -std::isize::MAX && old < 0);
         }
 
         /// Try to lock shared.
-        pub fn try_lock_shared_immediate(&self) -> bool {
+        pub(crate) fn try_lock_shared_immediate(&self) -> bool {
             let existing = self.state.fetch_add(1, Ordering::AcqRel);
 
             if existing < 0 {
@@ -70,7 +96,12 @@ mod internals {
         }
 
         /// Unlock shared access.
-        pub fn unlock_shared_immediate(&self) {
+        ///
+        /// # Safety
+        ///
+        /// This method may only be called if a shared lock is held in the
+        /// current context.
+        pub(crate) unsafe fn unlock_shared_immediate(&self) {
             self.state.fetch_sub(1, Ordering::AcqRel);
         }
     }
@@ -80,6 +111,7 @@ mod internals {
 mod internals {
     //! Implementation using raw locks from parking_lot.
     use lock_api::RawRwLock as _;
+    pub use parking_lot::Mutex;
 
     /// A simplified RwLock implementation which only supports voluntary locking.
     pub struct RwLock {
@@ -134,6 +166,7 @@ mod internals {
     }
 }
 
+pub use self::internals::Mutex;
 pub use self::internals::RwLock;
 
 impl RwLock {
