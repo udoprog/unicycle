@@ -1,3 +1,5 @@
+#![cfg(features = "futures-rs")]
+
 use tokio_stream::iter;
 use unicycle::StreamsUnordered;
 

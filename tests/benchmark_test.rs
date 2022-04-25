@@ -1,3 +1,5 @@
+#![cfg(features = "futures-rs")]
+
 use futures::channel::oneshot;
 use futures::future;
 use futures::stream::StreamExt;

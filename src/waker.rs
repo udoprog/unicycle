@@ -16,7 +16,9 @@ use std::ptr::{self, NonNull};
 use std::sync::Arc;
 use std::task::{Context, RawWaker, RawWakerVTable, Waker};
 
-use crate::{lock::RwLock, pin_vec::PinVec, Shared};
+use crate::lock::{Mutex, RwLock};
+use crate::pin_vec::PinVec;
+use crate::Shared;
 
 /// Wrap the current context in one that updates the local WakeSet.
 /// This takes the shared data by reference and uses `RefWaker::VTABLE`.
@@ -38,13 +40,13 @@ where
 
 /// A collection of [InternalWaker]s owned by a [Shared] task structure.
 pub(crate) struct InternalWakers {
-    wakers: parking_lot::Mutex<PinVec<InternalWaker>>,
+    wakers: Mutex<PinVec<InternalWaker>>,
 }
 
 impl InternalWakers {
     pub fn new() -> Self {
         Self {
-            wakers: parking_lot::Mutex::new(PinVec::new()),
+            wakers: Mutex::new(PinVec::new()),
         }
     }
 }
