@@ -106,6 +106,8 @@ const fn calculate_key(key: usize) -> (usize, usize, usize) {
 mod tests {
     use crate::pin_vec::calculate_key;
 
+    use super::PinVec;
+
     #[test]
     fn key_test() {
         // NB: range of the first slot.
@@ -120,5 +122,25 @@ mod tests {
                 calculate_key((1usize << (i + 1)) - 1)
             );
         }
+    }
+
+    #[test]
+    fn run_destructors() {
+        let mut destructor_ran = false;
+
+        struct RunDestructor<'a>(&'a mut bool);
+        impl<'a> Drop for RunDestructor<'a> {
+            fn drop(&mut self) {
+                *self.0 = true;
+            }
+        }
+
+        {
+            // Make sure PinVec runs the destructors
+            let mut v = PinVec::new();
+            v.push(RunDestructor(&mut destructor_ran));
+        }
+
+        assert!(destructor_ran);
     }
 }
