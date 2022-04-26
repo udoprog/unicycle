@@ -63,34 +63,23 @@ impl<T> PinVec<T> {
     where
         T: Unpin,
     {
-        // Safety: get_unchecked_mut lets us ignore the Pin part, but since T is Unpin
-        // it's okay to Unpin it.
-        unsafe { self.get_unchecked_mut(index) }
-    }
-
-    /// Return a mutable reference to the given entry
-    ///
-    /// # Safety:
-    /// Callers must ensure that the value pointed to by the return value is not moved.
-    pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> Option<&mut T> {
-        if index < self.len() {
-            let (slot, offset, _) = calculate_key(index);
-            // Safety: Callers must ensure they do not move the pointer returned from this
-            // function.
-            let slot = Pin::as_mut(&mut self.slots[slot]).get_unchecked_mut();
-            // Safety: We guarantee that all indices <= self.len are initialized
-            Some(slot[offset].assume_init_mut())
-        } else {
-            None
-        }
+        self.get_pin_mut(index).map(Pin::get_mut)
     }
 
     pub fn get_pin_mut(&mut self, index: usize) -> Option<Pin<&mut T>> {
-        // Safety: The items are all pinned already. get_unchecked_mut erased the Pin
-        // that we had already, so it is safe to restore it.
-        unsafe {
-            self.get_unchecked_mut(index)
-                .map(|item| Pin::new_unchecked(item))
+        if index < self.len() {
+            let (slot, offset, _) = calculate_key(index);
+
+            // Safety: we are projecting into a Pin<Box<[T]>> and staying pinned.
+            // The assume_init_mut call is safe beacuse we checked above whether we are in
+            // bounds, meaning the value stored in that location is initialized.
+            unsafe {
+                Some(Pin::map_unchecked_mut(self.slots[slot].as_mut(), |slot| {
+                    slot[offset].assume_init_mut()
+                }))
+            }
+        } else {
+            None
         }
     }
 
