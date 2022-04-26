@@ -212,21 +212,18 @@ impl<T> PinSlab<T> {
     /// assert!(!slab.remove(index));
     /// ```
     pub fn remove(&mut self, key: usize) -> bool {
-        // Safety: we get a mutable reference to Entry, but we are careful never to move it, only
-        // overwrite it in place.
-        unsafe {
-            let entry = match self.entries.get_unchecked_mut(key) {
-                Some(entry) => entry,
-                None => return false,
-            };
+        let mut entry = match self.entries.get_pin_mut(key) {
+            Some(entry) => entry,
+            None => return false,
+        };
 
-            match entry {
-                Entry::Occupied(..) => (),
-                _ => return false,
-            }
-
-            *entry = Entry::Vacant(self.next);
+        match entry.as_mut().project() {
+            EntryProject::Occupied(..) => (),
+            _ => return false,
         }
+
+        entry.set(Entry::Vacant(self.next));
+
         self.len -= 1;
         self.next = key;
 
@@ -255,21 +252,17 @@ impl<T> PinSlab<T> {
             self.entries
                 .extend((self.entries.len()..=key).map(|_| Entry::None));
         }
-        // Safety: we get an unchecked mut pointer to the entry, but we are careful
-        // to only right to it and not move from it.
-        unsafe {
-            let entry = self.entries.get_unchecked_mut(key).unwrap();
-            self.next = match *entry {
-                Entry::None => key + 1,
-                Entry::Vacant(next) => next,
-                // NB: unreachable because insert_at is an internal function,
-                // which can only be appropriately called on non-occupied
-                // entries. This is however, not a safety concern.
-                _ => unreachable!(),
-            };
+        let mut entry = self.entries.get_pin_mut(key).unwrap();
+        self.next = match entry.as_mut().project() {
+            EntryProject::None => key + 1,
+            EntryProject::Vacant(next) => *next,
+            // NB: unreachable because insert_at is an internal function,
+            // which can only be appropriately called on non-occupied
+            // entries. This is however, not a safety concern.
+            _ => unreachable!(),
+        };
 
-            *entry = Entry::Occupied(val);
-        }
+        entry.set(Entry::Occupied(val));
         self.len += 1;
     }
 }
