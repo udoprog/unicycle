@@ -23,13 +23,25 @@ impl<T> PinVec<T> {
     }
 
     pub fn clear(&mut self) {
-        for i in 0..self.len {
-            // Safety: we know the pointer is initialized because its index is in bounds, and it
-            // can be dropped because we are emptying the container, which means these contents
-            // will not be accessed again.
-            unsafe { drop_in_place(self.get_mut(i).unwrap()) }
+        if mem::needs_drop::<T>() {
+            let (last_slot, offset, _) = calculate_key(self.len());
+            for (i, mut slot) in self.slots.drain(..).enumerate() {
+                let slice: &mut [MaybeUninit<T>] = if i < last_slot {
+                    &mut *slot
+                } else {
+                    &mut slot[0..offset]
+                };
+                // Safety: we initialized slice to only point to the already-initialized elements.
+                // It's safe to drop_in_place because we are draining the Vec.
+                unsafe {
+                    let slice: &mut [T] = mem::transmute(slice);
+                    drop_in_place(slice);
+                }
+            }
+        } else {
+            self.slots.clear();
         }
-        self.slots.clear();
+        debug_assert_eq!(self.slots.len(), 0);
         self.len = 0;
     }
 
