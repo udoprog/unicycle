@@ -1,4 +1,5 @@
 #![cfg(feature = "futures-rs")]
+#![cfg(not(miri))]
 
 use futures::future::poll_fn;
 use futures::stream::Stream;
