@@ -177,7 +177,7 @@ use self::pin_slab::PinSlab;
 use self::wake_set::{SharedWakeSet, WakeSet};
 use self::waker::SharedWaker;
 #[cfg(feature = "futures-rs")]
-use futures_core::{FusedStream, Stream};
+use futures_core::{FusedFuture, FusedStream, Stream};
 
 /// Our very own homemade `ready!` impl.
 macro_rules! ready {
@@ -435,21 +435,22 @@ where
     ///     println!("done!");
     /// }
     /// ```
-    pub async fn next(&mut self) -> Option<<Self as PollNext>::Item> {
-        return Next(self).await;
+    pub fn next(&mut self) -> Next<'_, Self> {
+        Next(self)
+    }
+}
 
-        struct Next<'a, T>(&'a mut T);
+/// Future returned by [Unordered::next].
+pub struct Next<'a, T>(&'a mut T);
 
-        impl<T> Future for Next<'_, T>
-        where
-            T: Unpin + PollNext,
-        {
-            type Output = Option<T::Item>;
+impl<T> Future for Next<'_, T>
+where
+    T: Unpin + PollNext,
+{
+    type Output = Option<T::Item>;
 
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                Pin::new(&mut *self.0).poll_next(cx)
-            }
-        }
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut *self.0).poll_next(cx)
     }
 }
 
@@ -1081,6 +1082,15 @@ cfg_futures_rs! {
             let mut streams = StreamsUnordered::new();
             streams.extend(iter);
             streams
+        }
+    }
+
+    impl<T> FusedFuture for Next<'_, T>
+    where
+        T: Unpin + PollNext + FusedStream,
+    {
+        fn is_terminated(&self) -> bool {
+            self.0.is_terminated()
         }
     }
 }
