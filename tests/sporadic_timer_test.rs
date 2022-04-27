@@ -1,3 +1,5 @@
+#![cfg(not(miri))]
+
 use std::time::{Duration, Instant};
 use tokio::time;
 use tokio_stream::StreamExt;

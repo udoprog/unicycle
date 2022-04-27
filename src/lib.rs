@@ -30,7 +30,7 @@
 //!
 //! ## Examples
 //!
-//! ```rust
+//! ```no_miri
 //! use tokio::time;
 //! use std::time::Duration;
 //! use unicycle::FuturesUnordered;
@@ -53,7 +53,7 @@
 //!
 //! [Unordered] types can be created from iterators:
 //!
-//! ```rust
+//! ```no_miri
 //! use tokio::time;
 //! use std::time::Duration;
 //! use unicycle::FuturesUnordered;
@@ -458,7 +458,7 @@ impl<T> FuturesUnordered<T> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use unicycle::FuturesUnordered;
     ///
     /// let mut futures = FuturesUnordered::new();
@@ -569,7 +569,7 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use std::future::Ready;
     /// use unicycle::FuturesUnordered;
     ///
@@ -590,7 +590,7 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use unicycle::FuturesUnordered;
     ///
     /// let mut futures = FuturesUnordered::new();

@@ -25,3 +25,28 @@ jobs:
         profile: minimal
         override: true
     - run: cargo build
+    - run: cargo test
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        profile: minimal
+        components: miri
+        override: true
+    - run: cargo miri test -- pin_vec
+    - run: cargo miri test -- pin_slab
+
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        components: rustfmt
+    - run: cargo fmt --check

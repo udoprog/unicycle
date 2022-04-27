@@ -272,32 +272,3 @@ impl<T> Default for PinSlab<T> {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::PinSlab;
-
-    #[global_allocator]
-    static ALLOCATOR: checkers::Allocator = checkers::Allocator::system();
-
-    #[checkers::test]
-    fn insert_get_remove_many() {
-        let mut slab = PinSlab::new();
-
-        let mut keys = Vec::new();
-
-        for i in 0..1024 {
-            keys.push((i as u128, slab.insert(Box::new(i as u128))));
-        }
-
-        for (expected, key) in keys.iter().copied() {
-            let value = slab.get_pin_mut(key).expect("value to exist");
-            assert_eq!(expected, **value.as_ref());
-            assert!(slab.remove(key));
-        }
-
-        for (_, key) in keys.iter().copied() {
-            assert!(slab.get_pin_mut(key).is_none());
-        }
-    }
-}

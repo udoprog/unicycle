@@ -1,4 +1,5 @@
 #![cfg(features = "futures-rs")]
+#![cfg(not(miri))]
 
 use futures::channel::oneshot;
 use futures::future;
