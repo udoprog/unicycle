@@ -1,24 +1,29 @@
+/// A segmented vector type which pins the element `T`.
 use std::mem::{self, MaybeUninit};
 use std::ops::{Index, IndexMut};
 use std::pin::Pin;
 use std::ptr::drop_in_place;
+use std::slice;
 
+/// A segmented vector type which pins the element `T`.
 pub struct PinVec<T> {
-    // Slots of memory. Once one has been allocated it is never moved.
-    // This allows us to store entries in there and fetch them as `Pin<&mut T>`.
-    slots: Vec<Pin<Box<[MaybeUninit<T>]>>>,
-    // Number of Filled elements currently in the slab
+    // Slots of memory. Once one has been allocated it is never moved. This
+    // allows us to store entries in there and fetch them as `Pin<&mut T>`.
+    slots: Vec<Box<[MaybeUninit<T>]>>,
+    // Number of initialized elements in the container. Allows us to calculate
+    // how many elements in each slot are initialized.
     len: usize,
 }
 
 impl<T> PinVec<T> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             slots: Vec::new(),
             len: 0,
         }
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
@@ -26,25 +31,23 @@ impl<T> PinVec<T> {
     pub fn clear(&mut self) {
         if mem::needs_drop::<T>() {
             let (last_slot, offset, _) = calculate_key(self.len());
+
             for (i, mut slot) in self.slots.drain(..).enumerate() {
-                // Safety:
-                //   1. Although we do Pin::get_unchecked_mut, we do not actually move the value
-                //   2. We initialized slice to only point to the already-initialized elements.
-                //   3. It's safe to drop_in_place because we are draining the Vec.
+                // SAFETY:
+                // * We initialized slice to only point to the
+                //   already-initialized elements.
+                // * It's safe to `drop_in_place` because we are draining the
+                //   Vec and have ownership of the elements in the slot.
                 unsafe {
-                    let slot = Pin::as_mut(&mut slot).get_unchecked_mut();
-                    let slice: &mut [MaybeUninit<T>] = if i < last_slot {
-                        &mut *slot
-                    } else {
-                        &mut slot[0..offset]
-                    };
-                    let slice: &mut [T] = mem::transmute(slice);
-                    drop_in_place(slice);
+                    let len = if i < last_slot { slot.len() } else { offset };
+                    let base = slot.as_mut_ptr().cast::<T>();
+                    drop_in_place(slice::from_raw_parts_mut(base, len));
                 }
             }
         } else {
             self.slots.clear();
         }
+
         debug_assert_eq!(self.slots.len(), 0);
         self.len = 0;
     }
@@ -63,20 +66,22 @@ impl<T> PinVec<T> {
     where
         T: Unpin,
     {
-        self.get_pin_mut(index).map(Pin::get_mut)
+        Some(self.get_pin_mut(index)?.get_mut())
     }
 
     pub fn get_pin_mut(&mut self, index: usize) -> Option<Pin<&mut T>> {
         if index < self.len() {
             let (slot, offset, _) = calculate_key(index);
 
-            // Safety: we are projecting into a Pin<Box<[T]>> and staying pinned.
-            // The assume_init_mut call is safe beacuse we checked above whether we are in
-            // bounds, meaning the value stored in that location is initialized.
+            // SAFETY:
+            // * pin: We are fetching an element from a Box<[T]> which this type
+            //   guarantees will never move.
+            // * uninit: We've checked the length above and know that we are
+            //   withing the range of initialized elements.
             unsafe {
-                Some(Pin::map_unchecked_mut(self.slots[slot].as_mut(), |slot| {
-                    slot[offset].assume_init_mut()
-                }))
+                Some(Pin::new_unchecked(
+                    self.slots[slot][offset].assume_init_mut(),
+                ))
             }
         } else {
             None
@@ -93,18 +98,19 @@ impl<T> PinVec<T> {
             self.slots.push(slot.into());
         }
 
-        unsafe {
-            let slot = Pin::as_mut(&mut self.slots[slot]);
-            let slot = Pin::get_unchecked_mut(slot);
-            slot[offset].write(item);
-        }
-
+        self.slots[slot][offset].write(item);
         self.len += 1;
     }
+}
 
-    pub fn extend(&mut self, items: impl Iterator<Item = T>) {
-        for item in items {
-            self.push(item)
+impl<T> Extend<T> for PinVec<T> {
+    #[inline]
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = T>,
+    {
+        for item in iter {
+            self.push(item);
         }
     }
 }
