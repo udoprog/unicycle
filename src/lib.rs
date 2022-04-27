@@ -157,7 +157,8 @@
 
 mod lock;
 pub mod pin_slab;
-mod pin_vec;
+#[doc(hidden)]
+pub mod pin_vec;
 mod wake_set;
 mod waker;
 
