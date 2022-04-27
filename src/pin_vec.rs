@@ -1,4 +1,5 @@
-/// A segmented vector type which pins the element `T`.
+//! A segmented vector type which pins the element `T`.
+
 use std::mem::{self, MaybeUninit};
 use std::ops::{Index, IndexMut};
 use std::pin::Pin;
@@ -10,12 +11,21 @@ pub struct PinVec<T> {
     // Slots of memory. Once one has been allocated it is never moved. This
     // allows us to store entries in there and fetch them as `Pin<&mut T>`.
     slots: Vec<Box<[MaybeUninit<T>]>>,
-    // Number of initialized elements in the container. Allows us to calculate
+    // Number of initialized elements in the segmented vector. Allows us to calculate
     // how many elements in each slot are initialized.
     len: usize,
 }
 
 impl<T> PinVec<T> {
+    /// Construct a new empty vector.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use unicycle::pin_vec::PinVec;
+    ///
+    /// const VECTOR: PinVec<u32> = PinVec::new();
+    /// ```
     pub const fn new() -> Self {
         Self {
             slots: Vec::new(),
@@ -23,11 +33,39 @@ impl<T> PinVec<T> {
         }
     }
 
+    /// Get the length of the segmented vector.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use unicycle::pin_vec::PinVec;
+    ///
+    /// let mut vector = PinVec::<u32>::new();
+    ///
+    /// assert_eq!(vector.len(), 0);
+    /// vector.push(42);
+    /// assert_eq!(vector.len(), 1);
+    /// vector.clear();
+    /// assert_eq!(vector.len(), 0);
+    /// ```
     #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Clear the segmented vector, dropping each element in it as appropriate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use unicycle::pin_vec::PinVec;
+    ///
+    /// let mut vector = PinVec::<u32>::new();
+    /// vector.push(42);
+    /// assert_eq!(vector.get(0), Some(&42));
+    /// vector.clear();
+    /// assert_eq!(vector.get(0), None);
+    /// ```
     pub fn clear(&mut self) {
         if mem::needs_drop::<T>() {
             let (last_slot, offset, _) = calculate_key(self.len());
@@ -52,6 +90,17 @@ impl<T> PinVec<T> {
         self.len = 0;
     }
 
+    /// Get an immutable element from the segmented vector through the given `index`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use unicycle::pin_vec::PinVec;
+    ///
+    /// let mut vector = PinVec::<u32>::new();
+    /// vector.push(42);
+    /// assert_eq!(vector.get(0), Some(&42));
+    /// ```
     pub fn get(&self, index: usize) -> Option<&T> {
         if index < self.len() {
             let (slot, offset, _) = calculate_key(index);
@@ -62,6 +111,20 @@ impl<T> PinVec<T> {
         }
     }
 
+    /// Get a mutable element from the segmented vector through the given `index` if `T`
+    /// is [Unpin].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use unicycle::pin_vec::PinVec;
+    ///
+    /// let mut vector = PinVec::<u32>::new();
+    /// vector.push(42);
+    /// *vector.get_mut(0).unwrap() = 42;
+    ///
+    /// assert_eq!(vector.get_mut(0), Some(&mut 42));
+    /// ```
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T>
     where
         T: Unpin,
@@ -69,6 +132,21 @@ impl<T> PinVec<T> {
         Some(self.get_pin_mut(index)?.get_mut())
     }
 
+    /// Get a pinned element from the segmented vector through the given `index`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::pin::Pin;
+    ///
+    /// use unicycle::pin_vec::PinVec;
+    ///
+    /// let mut vector = PinVec::new();
+    /// vector.push(async {});
+    /// let future: Pin<_> = vector.get_pin_mut(0).unwrap();
+    ///
+    /// assert!(vector.get_pin_mut(42).is_none());
+    /// ```
     pub fn get_pin_mut(&mut self, index: usize) -> Option<Pin<&mut T>> {
         if index < self.len() {
             let (slot, offset, _) = calculate_key(index);
@@ -88,6 +166,21 @@ impl<T> PinVec<T> {
         }
     }
 
+    /// Push an element into the segmented vector.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::pin::Pin;
+    ///
+    /// use unicycle::pin_vec::PinVec;
+    ///
+    /// let mut vector = PinVec::new();
+    /// vector.push(async {});
+    /// let future: Pin<_> = vector.get_pin_mut(0).unwrap();
+    ///
+    /// assert!(vector.get_pin_mut(42).is_none());
+    /// ```
     pub fn push(&mut self, item: T) {
         let (slot, offset, slot_len) = calculate_key(self.len);
 
