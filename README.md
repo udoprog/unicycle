@@ -1,8 +1,8 @@
 # unicycle
 
-[<img alt="github" src="https://img.shields.io/badge/github-udoprog/unicycle?style=for-the-badge&logo=github" height="20">](https://github.com/udoprog/unicycle)
+[<img alt="github" src="https://img.shields.io/badge/github-udoprog/unicycle-8da0cb?style=for-the-badge&logo=github" height="20">](https://github.com/udoprog/unicycle)
 [<img alt="crates.io" src="https://img.shields.io/crates/v/unicycle.svg?style=for-the-badge&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/unicycle)
-[<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-unicycle?style=for-the-badge&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K" height="20">](https://docs.rs/unicycle)
+[<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-unicycle-66c2a5?style=for-the-badge&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K" height="20">](https://docs.rs/unicycle)
 [<img alt="build status" src="https://img.shields.io/github/workflow/status/udoprog/unicycle/CI/main?style=for-the-badge" height="20">](https://github.com/udoprog/unicycle/actions?query=branch%3Amain)
 
 A scheduler for driving a large number of futures.
@@ -23,16 +23,16 @@ better memory locality for the futures being pollled.
 possibly bad assumptions which needs to be either vetted or removed before you
 should consider putting it in production.
 
-### Features
+## Features
 
 * `parking-lot` - To enable locking using the [parking_lot] crate (default).
 * `futures-rs` - Enable the used of the Stream type from [futures-rs].
   This is required to get access to [StreamsUnordered] and
   [IndexedStreamsUnordered] since these wrap over [futures-rs] types. (default)
 
-### Examples
+## Examples
 
-```rust
+```no_miri
 use tokio::time;
 use std::time::Duration;
 use unicycle::FuturesUnordered;
@@ -55,7 +55,7 @@ async fn main() {
 
 [Unordered] types can be created from iterators:
 
-```rust
+```no_miri
 use tokio::time;
 use std::time::Duration;
 use unicycle::FuturesUnordered;
@@ -78,7 +78,7 @@ async fn main() {
 }
 ```
 
-### Fairness
+## Fairness
 
 You can think of abstractions like Unicycle as schedulers. They are provided
 a set of child tasks, and try to do their best to drive them to completion.
@@ -108,7 +108,7 @@ registered in the swapped in set which will be polled the next cycle.
 This way we hope to achieve a higher degree of fairness, never favoring the
 behavior of one particular task.
 
-### Architecture
+## Architecture
 
 The [Unordered] type stores all futures being polled in a [PinSlab]
 (Inspired by the [slab] crate). A slab is capable of utomatically reclaiming
@@ -152,5 +152,3 @@ we start the cycle over again.
 [spin abnormally]: https://github.com/udoprog/unicycle/blob/master/tests/spinning_futures_unordered.rs
 [StreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.StreamsUnordered.html
 [Unordered]: https://docs.rs/unicycle/latest/unicycle/struct.Unordered.html
-
-License: MIT/Apache-2.0
