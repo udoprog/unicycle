@@ -23,12 +23,16 @@ better memory locality for the futures being pollled.
 possibly bad assumptions which needs to be either vetted or removed before you
 should consider putting it in production.
 
+<br>
+
 ## Features
 
 * `parking-lot` - To enable locking using the [parking_lot] crate (default).
 * `futures-rs` - Enable the used of the Stream type from [futures-rs].
   This is required to get access to [StreamsUnordered] and
   [IndexedStreamsUnordered] since these wrap over [futures-rs] types. (default)
+
+<br>
 
 ## Examples
 
@@ -78,6 +82,8 @@ async fn main() {
 }
 ```
 
+<br>
+
 ## Fairness
 
 You can think of abstractions like Unicycle as schedulers. They are provided
@@ -107,6 +113,8 @@ registered in the swapped in set which will be polled the next cycle.
 
 This way we hope to achieve a higher degree of fairness, never favoring the
 behavior of one particular task.
+
+<br>
 
 ## Architecture
 
