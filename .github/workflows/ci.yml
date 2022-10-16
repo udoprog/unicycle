@@ -3,18 +3,6 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  build_no_default_features:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        profile: minimal
-        override: true
-    - run: cargo build --no-default-features
-    - run: cargo test --no-default-features
-  
   build:
     runs-on: ubuntu-latest
     steps:
@@ -25,7 +13,19 @@ jobs:
         profile: minimal
         override: true
     - run: cargo build
+    - run: cargo build --no-default-features
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
     - run: cargo test
+    - run: cargo test --no-default-features
 
   miri:
     runs-on: ubuntu-latest
