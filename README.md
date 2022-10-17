@@ -157,6 +157,6 @@ we start the cycle over again.
 [reported by Jon Gjengset]: https://github.com/rust-lang/futures-rs/issues/2047
 [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
 [slab]: https://github.com/carllerche/slab
-[spin abnormally]: https://github.com/udoprog/unicycle/blob/master/tests/spinning_futures_unordered.rs
+[spin abnormally]: https://github.com/udoprog/unicycle/blob/main/tests/spinning_futures_unordered_test.rs
 [StreamsUnordered]: https://docs.rs/unicycle/latest/unicycle/type.StreamsUnordered.html
 [Unordered]: https://docs.rs/unicycle/latest/unicycle/struct.Unordered.html
