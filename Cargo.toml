@@ -3,14 +3,12 @@ name = "unicycle"
 version = "0.9.2"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2021"
-license = "MIT/Apache-2.0"
-readme = "README.md"
-repository = "https://github.com/udoprog/unicycle"
-homepage = "https://github.com/udoprog/unicycle"
+description = "A scheduler for driving a large number of futures."
 documentation = "https://docs.rs/unicycle"
-description = """
-A scheduler for driving a large number of futures.
-"""
+readme = "README.md"
+homepage = "https://github.com/udoprog/unicycle"
+repository = "https://github.com/udoprog/unicycle"
+license = "MIT/Apache-2.0"
 keywords = ["async", "futures", "future"]
 categories = ["asynchronous", "algorithms"]
 
