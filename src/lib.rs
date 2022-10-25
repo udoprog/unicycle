@@ -541,7 +541,6 @@ where
             if let Poll::Ready(result) = result {
                 let removed = slab.remove(index);
                 debug_assert!(removed);
-                cx.waker().wake_by_ref();
                 return Poll::Ready(Some(result));
             }
         }
