@@ -32,7 +32,8 @@ pub fn polling_benchmark(c: &mut Criterion) {
     }
 
     fn unicycle(num: usize, threads: usize) -> usize {
-        use unicycle::FuturesUnordered;
+        use std::pin::Pin;
+        use unicycle::{FuturesUnordered, PollNext};
 
         let txs = SegQueue::new();
         let mut rxs = FuturesUnordered::new();
@@ -62,7 +63,7 @@ pub fn polling_benchmark(c: &mut Criterion) {
             let mut result = 0usize;
 
             loop {
-                if let Poll::Ready(ready) = rxs.poll_next_unpin(cx) {
+                if let Poll::Ready(ready) = Pin::new(&mut rxs).poll_next(cx) {
                     match ready {
                         Some(num) => result = result.wrapping_add(num.unwrap()),
                         None => break,

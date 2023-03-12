@@ -162,6 +162,7 @@
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(rustdoc::broken_intra_doc_links)]
+#![allow(clippy::should_implement_trait)]
 
 mod lock;
 pub mod pin_slab;

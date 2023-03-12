@@ -1,5 +1,7 @@
 //! A segmented vector type which pins the element `T`.
 
+#![allow(clippy::len_without_is_empty)]
+
 use std::mem::{self, MaybeUninit};
 use std::ops::{Index, IndexMut};
 use std::pin::Pin;
@@ -188,7 +190,7 @@ impl<T> PinVec<T> {
             let slot = (0..slot_len)
                 .map(|_| MaybeUninit::uninit())
                 .collect::<Box<[_]>>();
-            self.slots.push(slot.into());
+            self.slots.push(slot);
         }
 
         self.slots[slot][offset].write(item);
@@ -238,7 +240,7 @@ const FIRST_SLOT_MASK: usize =
 const fn calculate_key(key: usize) -> (usize, usize, usize) {
     assert!(key < (1usize << (mem::size_of::<usize>() * 8 - 1)));
 
-    let slot = ((mem::size_of::<usize>() * 8) as usize - key.leading_zeros() as usize)
+    let slot = ((mem::size_of::<usize>() * 8) - key.leading_zeros() as usize)
         .saturating_sub(FIRST_SLOT_MASK);
 
     let (start, end) = if key < FIRST_SLOT_SIZE {

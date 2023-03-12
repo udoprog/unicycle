@@ -76,6 +76,8 @@ impl InternalWaker {
         Self { shared, index }
     }
 
+    /// Construct a new internal waker reference.
+    /// Caller must ensure that the internal waker has the appropriate lifetime.
     fn as_shared_waker_ref(&self) -> InternalWakerRef {
         InternalWakerRef::from_waker(self)
     }
@@ -94,8 +96,10 @@ impl InternalWaker {
 struct InternalWakerRef(NonNull<InternalWaker>);
 
 impl InternalWakerRef {
+    /// Get a new reference counted internal waker.
     fn get_shared_waker(shared: &Shared, index: usize) -> Self {
         let mut all_wakers = shared.all_wakers.wakers.lock();
+
         if all_wakers.len() <= index {
             let len = all_wakers.len();
             all_wakers.extend((len..index + 1).map(|i| InternalWaker::new(shared.into(), i)));
@@ -104,10 +108,18 @@ impl InternalWakerRef {
         all_wakers[index].as_shared_waker_ref()
     }
 
+    /// Construct from an existing internal waker.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the internal waker has the appropriate lifetime.
     fn from_waker(waker: &InternalWaker) -> Self {
+        // SAFETY: we know that this is constructed from a legal Arc instance,
+        // since it's all handled internally.
         unsafe {
             Arc::increment_strong_count(waker.shared.as_ptr());
         }
+
         InternalWakerRef(NonNull::from(waker))
     }
 

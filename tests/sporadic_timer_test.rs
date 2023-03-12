@@ -18,7 +18,7 @@ async fn test_unicycle_sporadic_timers() {
 
     let start = Instant::now();
 
-    while let Some(_) = futures.next().await {}
+    while futures.next().await.is_some() {}
 
     println!("bitset: {:?}", Instant::now().duration_since(start));
 }
@@ -37,7 +37,7 @@ async fn test_futures_sporadic_timers() {
 
     let start = Instant::now();
 
-    while let Some(_) = futures.next().await {}
+    while futures.next().await.is_some() {}
 
     println!("futures: {:?}", Instant::now().duration_since(start));
 }

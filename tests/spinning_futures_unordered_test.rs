@@ -37,7 +37,7 @@ async fn test_spinning_unordered() {
     futures.push(Spinner(&count));
     pin_utils::pin_mut!(futures);
 
-    let _ = poll_fn::<(), _>(move |cx| {
+    poll_fn::<(), _>(move |cx| {
         // NB: needs to be polled twice to cause the bitsets to be swapped out.
         assert_eq!(Poll::Pending, Pin::new(&mut futures).poll_next(cx));
         let _ = Pin::new(&mut futures).poll_next(cx);
