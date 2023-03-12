@@ -1,17 +1,17 @@
 name: CI
 
-on: [push, pull_request]
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        profile: minimal
-        override: true
+    - run: rustup toolchain install stable --profile minimal
     - run: cargo build
     - run: cargo build --no-default-features
 
@@ -19,11 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        profile: minimal
-        override: true
+    - run: rustup toolchain install stable --profile minimal
     - run: cargo test
     - run: cargo test --no-default-features
 
@@ -31,12 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: nightly
-        profile: minimal
-        components: miri
-        override: true
+    - run: rustup toolchain install nightly --profile minimal --component miri
+    - run: rustup default nightly
     - run: cargo miri test -- pin_vec
     - run: cargo miri test -- pin_slab
 
@@ -44,9 +36,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
-        components: rustfmt
+    - run: rustup toolchain install stable --profile minimal --component rustfmt
     - run: cargo fmt --check
