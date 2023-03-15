@@ -9,13 +9,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.57", stable]
     steps:
     - uses: actions/checkout@v3
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{matrix.rust}}
+    - run: cargo build --workspace
     - run: cargo test --workspace --all-targets
+      if: matrix.rust == 'stable'
     - run: cargo test --workspace --all-targets --no-default-features
+      if: matrix.rust == 'stable'
     - run: cargo test --workspace --doc
-    - run: cargo test --workspace --doc --no-default-features
+      if: matrix.rust == 'stable'
 
   clippy:
     runs-on: ubuntu-latest
