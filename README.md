@@ -36,7 +36,7 @@ should consider putting it in production.
 
 ## Examples
 
-```no_miri
+```rust
 use tokio::time;
 use std::time::Duration;
 use unicycle::FuturesUnordered;
@@ -59,7 +59,7 @@ async fn main() {
 
 [Unordered] types can be created from iterators:
 
-```no_miri
+```rust
 use tokio::time;
 use std::time::Duration;
 use unicycle::FuturesUnordered;
