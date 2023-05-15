@@ -91,7 +91,7 @@ impl SharedWakeSet {
         self.wake_set.swap(other, Ordering::AcqRel)
     }
 
-    /// Register wakeup for the specified index.
+    /// Register interesting in waking up for the specified index.
     pub(crate) fn wake(&self, index: usize) {
         // We need to spin here, since the wake set might be swapped out while we
         // are trying to update it.

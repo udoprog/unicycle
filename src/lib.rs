@@ -11,10 +11,9 @@
 //! * [IndexedStreamsUnordered]
 //!
 //! These are async abstractions that runs a set of futures or streams which may
-//! complete in any order.
-//! Similarly to [FuturesUnordered][futures-rs] from the [futures crate].
-//! But we aim to provide a stronger guarantee of fairness (see below), and
-//! better memory locality for the futures being pollled.
+//! complete in any order. Similarly to [FuturesUnordered][futures-rs] from the
+//! [futures crate]. But we aim to provide a stronger guarantee of fairness (see
+//! below), and better memory locality for the futures being polled.
 //!
 //! **Note:** This project is experimental. It involves some amount of unsafe and
 //! possibly bad assumptions which needs to be either vetted or removed before you
@@ -96,7 +95,7 @@
 //! aggressively signal interest in waking up will receive priority and be
 //! polled more frequently. Since there is a higher chance that while the queue
 //! is being drained, their interest will be re-added at the head of the queue
-//! immeidately. This can lead to instances where a small number of tasks can
+//! immediately. This can lead to instances where a small number of tasks can
 //! can cause the polling loop of [FuturesUnordered][futures-rs] to [spin
 //! abnormally]. This issue was [reported by Jon Gjengset] and is improved on by
 //! [limiting the amount FuturesUnordered is allowed to spin].
@@ -105,8 +104,9 @@
 //! polled per _polling cycle_. This is done by tracking polling interest in two
 //! separate sets. Once we are polled, we swap out the active set then take the
 //! swapped out set and use as a basis for what to poll in order while limiting
-//! ourselves to only poll _once_ per child task. Additional wakeups are only
-//! registered in the swapped in set which will be polled the next cycle.
+//! ourselves to only poll _once_ per child task. Additional interest in waking
+//! up is only registered in the swapped in set which will be polled the next
+//! cycle.
 //!
 //! This way we hope to achieve a higher degree of fairness, never favoring the
 //! behavior of one particular task.
@@ -116,17 +116,17 @@
 //! ## Architecture
 //!
 //! The [Unordered] type stores all futures being polled in a [PinSlab]
-//! (Inspired by the [slab] crate). A slab is capable of utomatically reclaiming
-//! storage at low cost, and will maintain decent memory locality. A [PinSlab]
-//! is different from a [Slab] in how it allocates the memory regions it uses to
-//! store objects. While a regular [Slab] is simply backed by a vector which
-//! grows as appropriate, this approach is not viable for pinning, since it
-//! would cause the objects to move while being reallocated. Instead [PinSlab]
-//! maintains a growable collection of fixed-size memory regions, allowing it to
-//! store and reference immovable objects through the [pin API]. Each future
-//! inserted into the slab is assigned an _index_, which we will be using below.
-//! We now call the inserted future a _task_, and you can think of this index as
-//! a unique task identifier.
+//! (Inspired by the [slab] crate). A slab is capable of automatically
+//! reclaiming storage at low cost, and will maintain decent memory locality. A
+//! [PinSlab] is different from a [Slab] in how it allocates the memory regions
+//! it uses to store objects. While a regular [Slab] is simply backed by a
+//! vector which grows as appropriate, this approach is not viable for pinning,
+//! since it would cause the objects to move while being reallocated. Instead
+//! [PinSlab] maintains a growable collection of fixed-size memory regions,
+//! allowing it to store and reference immovable objects through the [pin API].
+//! Each future inserted into the slab is assigned an _index_, which we will be
+//! using below. We now call the inserted future a _task_, and you can think of
+//! this index as a unique task identifier.
 //!
 //! Next to the slab we maintain two [BitSets][BitSet], one _active_ and one
 //! _alternate_. When a task registers interest in waking up, the bit associated
@@ -178,6 +178,7 @@ use std::pin::Pin;
 use std::ptr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+
 use uniset::BitSet;
 use waker::InternalWakers;
 
@@ -292,7 +293,7 @@ impl Shared {
         // There is a race going on between locking and unlocking, and it's
         // beneficial for child tasks to observe the locked state of the wake
         // set so they refetch the other set instead of having to wait until
-        // another wakeup.
+        // another wake.
         (**alternate).unlock_exclusive();
 
         let next = mem::replace(alternate, ptr::null_mut());
@@ -373,13 +374,11 @@ pub struct Unordered<T, S>
 where
     S: Sentinel,
 {
-    /// Slab of futures being polled.
-    /// They need to be pinned on the heap, since the slab might grow to
-    /// accomodate more futures.
+    /// Slab of futures being polled. They need to be pinned on the heap, since
+    /// the slab might grow to accommodate more futures.
     slab: PinSlab<T>,
-    /// Shared parent waker.
-    /// Includes the current wake target. Each time we poll, we swap back and
-    /// forth between this and `alternate`.
+    /// Shared parent waker. Includes the current wake target. Each time we
+    /// poll, we swap back and forth between this and `alternate`.
     shared: Arc<Shared>,
     /// Alternate wake set, used for growing the existing set when futures are
     /// added. This is then swapped out with the active set to receive polls.
@@ -523,12 +522,11 @@ where
         let (non_empty, wake_last) = ready!(unsafe { shared.poll_swap_active(cx, alternate) });
 
         for index in wake_last.drain() {
-            // NB: Since we defer pollables a little, a future might
-            // have been polled and subsequently removed from the slab.
-            // So we don't treat this as an error here.
-            // If on the other hand it was removed _and_ re-added, we have
-            // a case of a spurious poll. Luckily, that doesn't bother a
-            // future much.
+            // NB: Since we defer polling a little, a future might have been
+            // polled and subsequently removed from the slab. So we don't treat
+            // this as an error here. If on the other hand it was removed _and_
+            // re-added, we have a case of a spurious poll. Luckily, that
+            // doesn't bother a future much.
             let fut = match slab.get_pin_mut(index) {
                 Some(fut) => fut,
                 None => continue,
@@ -624,12 +622,11 @@ where
             return index;
         }
 
-        // Slow Path: Swap out the active set and grow it to accomodate the same
-        // number of elements as the now alternate set was grown to.
-        // This works out, because if it's non-empty, the next time we poll
-        // the unordered set it will be processed. It it's empty, it will be
-        // swapped out with the active set which now contains the newly added
-        // futures.
+        // Slow Path: Swap out the active set and grow it to accommodate the
+        // same number of elements as the now alternate set was grown to. This
+        // works out, because if it's non-empty, the next time we poll the
+        // unordered set it will be processed. It it's empty, it will be swapped
+        // out with the active set which now contains the newly added futures.
         // Safety: We have unique access to the alternate set being modified.
         unsafe {
             self.shared.swap_active(&mut self.alternate).reserve(new);
@@ -962,12 +959,11 @@ cfg_futures_rs! {
             let (non_empty, wake_last) = ready!(unsafe { shared.poll_swap_active(cx, alternate) });
 
             for index in wake_last.drain() {
-                // NB: Since we defer pollables a little, a future might
-                // have been polled and subsequently removed from the slab.
-                // So we don't treat this as an error here.
-                // If on the other hand it was removed _and_ re-added, we have
-                // a case of a spurious poll. Luckily, that doesn't bother a
-                // future much.
+                // NB: Since we defer polling a little, a future might have been
+                // polled and subsequently removed from the slab. So we don't
+                // treat this as an error here. If on the other hand it was
+                // removed _and_ re-added, we have a case of a spurious poll.
+                // Luckily, that doesn't bother a future much.
                 let stream = match slab.get_pin_mut(index) {
                     Some(stream) => stream,
                     None => continue,
@@ -1032,12 +1028,11 @@ cfg_futures_rs! {
             let (non_empty, wake_last) = ready!(unsafe { shared.poll_swap_active(cx, alternate) });
 
             for index in wake_last.drain() {
-                // NB: Since we defer pollables a little, a future might
-                // have been polled and subsequently removed from the slab.
-                // So we don't treat this as an error here.
-                // If on the other hand it was removed _and_ re-added, we have
-                // a case of a spurious poll. Luckily, that doesn't bother a
-                // future much.
+                // NB: Since we defer polling a little, a future might have been
+                // polled and subsequently removed from the slab. So we don't
+                // treat this as an error here. If on the other hand it was
+                // removed _and_ re-added, we have a case of a spurious poll.
+                // Luckily, that doesn't bother a future much.
                 let stream = match slab.get_pin_mut(index) {
                     Some(stream) => stream,
                     None => continue,

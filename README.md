@@ -14,10 +14,9 @@ Unicycle provides a collection of [Unordered] types:
 * [IndexedStreamsUnordered]
 
 These are async abstractions that runs a set of futures or streams which may
-complete in any order.
-Similarly to [FuturesUnordered][futures-rs] from the [futures crate].
-But we aim to provide a stronger guarantee of fairness (see below), and
-better memory locality for the futures being pollled.
+complete in any order. Similarly to [FuturesUnordered][futures-rs] from the
+[futures crate]. But we aim to provide a stronger guarantee of fairness (see
+below), and better memory locality for the futures being polled.
 
 **Note:** This project is experimental. It involves some amount of unsafe and
 possibly bad assumptions which needs to be either vetted or removed before you
@@ -99,7 +98,7 @@ polls the associated task. This process has a side effect where tasks who
 aggressively signal interest in waking up will receive priority and be
 polled more frequently. Since there is a higher chance that while the queue
 is being drained, their interest will be re-added at the head of the queue
-immeidately. This can lead to instances where a small number of tasks can
+immediately. This can lead to instances where a small number of tasks can
 can cause the polling loop of [FuturesUnordered][futures-rs] to [spin
 abnormally]. This issue was [reported by Jon Gjengset] and is improved on by
 [limiting the amount FuturesUnordered is allowed to spin].
@@ -108,8 +107,9 @@ Unicycle addresses this by limiting how frequently a child task may be
 polled per _polling cycle_. This is done by tracking polling interest in two
 separate sets. Once we are polled, we swap out the active set then take the
 swapped out set and use as a basis for what to poll in order while limiting
-ourselves to only poll _once_ per child task. Additional wakeups are only
-registered in the swapped in set which will be polled the next cycle.
+ourselves to only poll _once_ per child task. Additional interest in waking
+up is only registered in the swapped in set which will be polled the next
+cycle.
 
 This way we hope to achieve a higher degree of fairness, never favoring the
 behavior of one particular task.
@@ -119,17 +119,17 @@ behavior of one particular task.
 ## Architecture
 
 The [Unordered] type stores all futures being polled in a [PinSlab]
-(Inspired by the [slab] crate). A slab is capable of utomatically reclaiming
-storage at low cost, and will maintain decent memory locality. A [PinSlab]
-is different from a [Slab] in how it allocates the memory regions it uses to
-store objects. While a regular [Slab] is simply backed by a vector which
-grows as appropriate, this approach is not viable for pinning, since it
-would cause the objects to move while being reallocated. Instead [PinSlab]
-maintains a growable collection of fixed-size memory regions, allowing it to
-store and reference immovable objects through the [pin API]. Each future
-inserted into the slab is assigned an _index_, which we will be using below.
-We now call the inserted future a _task_, and you can think of this index as
-a unique task identifier.
+(Inspired by the [slab] crate). A slab is capable of automatically
+reclaiming storage at low cost, and will maintain decent memory locality. A
+[PinSlab] is different from a [Slab] in how it allocates the memory regions
+it uses to store objects. While a regular [Slab] is simply backed by a
+vector which grows as appropriate, this approach is not viable for pinning,
+since it would cause the objects to move while being reallocated. Instead
+[PinSlab] maintains a growable collection of fixed-size memory regions,
+allowing it to store and reference immovable objects through the [pin API].
+Each future inserted into the slab is assigned an _index_, which we will be
+using below. We now call the inserted future a _task_, and you can think of
+this index as a unique task identifier.
 
 Next to the slab we maintain two [BitSets][BitSet], one _active_ and one
 _alternate_. When a task registers interest in waking up, the bit associated
