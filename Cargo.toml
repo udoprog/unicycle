@@ -9,7 +9,7 @@ documentation = "https://docs.rs/unicycle"
 readme = "README.md"
 homepage = "https://github.com/udoprog/unicycle"
 repository = "https://github.com/udoprog/unicycle"
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 keywords = ["async", "future", "futures"]
 categories = ["algorithms", "asynchronous"]
 
