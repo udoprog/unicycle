@@ -29,7 +29,6 @@ pin-project = "1.0.12"
 tokio = { version = "1.27.0", features = ["full"] }
 tokio-util = { version = "0.7.7", features = ["codec"] }
 tokio-stream = "0.1.12"
-checkers = "0.6.3"
 rand = "0.8.5"
 futures = "0.3.28"
 pin-utils = "0.1.0"

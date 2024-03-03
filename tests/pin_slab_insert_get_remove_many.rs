@@ -1,14 +1,11 @@
 use unicycle::pin_slab::PinSlab;
 
-#[global_allocator]
-static ALLOCATOR: checkers::Allocator = checkers::Allocator::system();
-
 #[cfg(not(miri))]
 const AMOUNT: usize = 1024;
 #[cfg(miri)]
 const AMOUNT: usize = 128;
 
-#[checkers::test]
+#[test]
 fn pin_slab_insert_get_remove_many() {
     let mut slab = PinSlab::new();
 

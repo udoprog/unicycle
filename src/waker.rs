@@ -97,12 +97,12 @@ struct InternalWakerRef(NonNull<InternalWaker>);
 
 impl InternalWakerRef {
     /// Get a new reference counted internal waker.
-    fn get_shared_waker(shared: &Shared, index: usize) -> Self {
-        let mut all_wakers = shared.all_wakers.wakers.lock();
+    unsafe fn get_shared_waker(shared: NonNull<Shared>, index: usize) -> Self {
+        let mut all_wakers = shared.as_ref().all_wakers.wakers.lock();
 
         if all_wakers.len() <= index {
             let len = all_wakers.len();
-            all_wakers.extend((len..index + 1).map(|i| InternalWaker::new(shared.into(), i)));
+            all_wakers.extend((len..index + 1).map(|i| InternalWaker::new(shared, i)));
         }
 
         all_wakers[index].as_shared_waker_ref()
@@ -138,7 +138,7 @@ impl InternalWakerRef {
     unsafe fn clone_unchecked(ptr: *const ()) -> RawWaker {
         let this: ManuallyDrop<InternalWakerRef> = mem::transmute(ptr);
         InternalWakerRef::get_shared_waker(
-            &*(this.internals().shared.as_ptr()),
+            this.internals().shared,
             this.internals().index,
         )
         .into()
