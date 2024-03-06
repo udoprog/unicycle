@@ -1,4 +1,4 @@
-use crate::storage::Storage;
+use crate::task::Storage;
 
 struct Foo(u32);
 

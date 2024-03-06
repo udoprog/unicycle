@@ -10,13 +10,14 @@
 
 use std::pin::Pin;
 use std::ptr::{self, NonNull};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::waker::Header;
-use crate::Shared;
+use crate::shared::Shared;
 
-/// Pre-allocated storage for a uniform data type, with slots of immovable
-/// memory regions.
+const MAX_REFCOUNT: usize = (isize::MAX) as usize;
+
+/// Where all tasks and task-related data is stored.
 pub(crate) struct Storage<T> {
     /// Shared state across all entries.
     shared: Arc<Shared>,
@@ -28,18 +29,80 @@ pub(crate) struct Storage<T> {
     ///
     /// For example, the header of the entry is used inside of the waker being
     /// passed around.
-    entries: Vec<NonNull<Entry<T>>>,
+    tasks: Vec<NonNull<Task<T>>>,
     /// The length of the slab.
     len: usize,
     // Offset of the next available slot in the slab.
     next: usize,
 }
 
+enum Entry<T> {
+    None,
+    Some(T),
+    Vacant(usize),
+}
+
 #[repr(C)]
-pub(crate) struct Entry<T> {
+pub(crate) struct Task<T> {
     header: Header,
-    vacant: Option<usize>,
-    value: Option<T>,
+    entry: Entry<T>,
+}
+
+/// A header is basically a pointer to the shared state combined with the index we wish to poll.
+pub(crate) struct Header {
+    /// A pointer to the [Shared] task data.
+    shared: Arc<Shared>,
+    /// The index of the task this waker will wake.
+    index: usize,
+    /// Reference count of the header.
+    reference_count: AtomicUsize,
+}
+
+impl Header {
+    /// Construct a new waker.
+    pub(crate) fn new(shared: Arc<Shared>, index: usize) -> Self {
+        Self {
+            shared,
+            index,
+            reference_count: AtomicUsize::new(1),
+        }
+    }
+
+    /// The index of the task.
+    #[inline]
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Access shared storage from header.
+    #[inline]
+    pub(crate) fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
+    /// Increment ref count of stored entry.
+    pub(crate) fn increment_ref(&self) {
+        let count = self.reference_count.fetch_add(1, Ordering::SeqCst);
+
+        // Degenerate case we don't want to support. Any process actually
+        // reaching this is already broken to the point of no return since
+        // legitimate use would require more than isize::MAX amount of memory.
+        if count > MAX_REFCOUNT {
+            std::process::abort();
+        }
+    }
+
+    /// Decrement ref count of stored entry, returns `true` if the entry should be deallocated.
+    pub(crate) unsafe fn decrement_ref(&self) -> bool {
+        let count = self.reference_count.fetch_sub(1, Ordering::SeqCst);
+        count == 1
+    }
+
+    /// Deallocate the entry associated with the header.
+    pub(crate) unsafe fn deallocate(ptr: NonNull<Header>) {
+        let drop_task = ptr.as_ref().shared.drop_task;
+        drop_task(ptr.as_ptr().cast_const().cast());
+    }
 }
 
 impl<T> Storage<T> {
@@ -47,7 +110,7 @@ impl<T> Storage<T> {
     pub(crate) fn new() -> Self {
         Self {
             shared: Arc::new(Shared::new::<T>()),
-            entries: Vec::new(),
+            tasks: Vec::new(),
             len: 0,
             next: 0,
         }
@@ -77,14 +140,16 @@ impl<T> Storage<T> {
 
     /// Access the given key as a pinned mutable value along with its header.
     pub(crate) fn get_pin_mut(&mut self, key: usize) -> Option<(NonNull<Header>, Pin<&mut T>)> {
-        let entry = *self.entries.get(key)?;
+        let task = *self.tasks.get(key)?;
 
         // SAFETY: We have mutable access to the given entry, but we are careful
         // not to dereference the header mutably, since that might be shared.
         unsafe {
-            match &mut *ptr::addr_of_mut!((*entry.as_ptr()).value) {
-                Some(value) => Some((entry.cast::<Header>(), Pin::new_unchecked(value))),
-                None => None,
+            match *ptr::addr_of_mut!((*task.as_ptr()).entry) {
+                Entry::Some(ref mut value) => {
+                    Some((task.cast::<Header>(), Pin::new_unchecked(value)))
+                }
+                _ => None,
             }
         }
     }
@@ -92,11 +157,16 @@ impl<T> Storage<T> {
     /// Get a reference to the value at the given slot.
     #[cfg(test)]
     pub(crate) fn get(&self, key: usize) -> Option<&T> {
-        let entry = *self.entries.get(key)?;
+        let task = *self.tasks.get(key)?;
 
         // SAFETY: We have mutable access to the given entry, but we are careful
         // not to dereference the header mutably, since that might be shared.
-        unsafe { (*ptr::addr_of!((*entry.as_ptr()).value)).as_ref() }
+        unsafe {
+            match *ptr::addr_of!((*task.as_ptr()).entry) {
+                Entry::Some(ref value) => Some(value),
+                _ => None,
+            }
+        }
     }
 
     /// Get a mutable reference to the value at the given slot.
@@ -104,11 +174,16 @@ impl<T> Storage<T> {
     where
         T: Unpin,
     {
-        let entry = *self.entries.get(key)?;
+        let task = *self.tasks.get(key)?;
 
         // SAFETY: We have mutable access to the given entry, but we are careful
         // not to dereference the header mutably, since that might be shared.
-        unsafe { (*ptr::addr_of_mut!((*entry.as_ptr()).value)).as_mut() }
+        unsafe {
+            match *ptr::addr_of_mut!((*task.as_ptr()).entry) {
+                Entry::Some(ref mut value) => Some(value),
+                _ => None,
+            }
+        }
     }
 
     /// Remove the key from the slab.
@@ -120,7 +195,7 @@ impl<T> Storage<T> {
     /// We need to take care that we don't move it, hence we only perform
     /// operations over pointers below.
     pub(crate) fn remove(&mut self, key: usize) -> bool {
-        let entry = match self.entries.get(key) {
+        let task = match self.tasks.get(key) {
             Some(entry) => *entry,
             None => return false,
         };
@@ -128,12 +203,12 @@ impl<T> Storage<T> {
         // SAFETY: We have mutable access to the given entry, but we are careful
         // not to dereference the header mutably, since that might be shared.
         unsafe {
-            match ptr::addr_of_mut!((*entry.as_ptr()).value).replace(None) {
-                Some(..) => (),
+            let value = match *ptr::addr_of_mut!((*task.as_ptr()).entry) {
+                ref mut value @ Entry::Some(..) => value,
                 _ => return false,
-            }
+            };
 
-            ptr::addr_of_mut!((*entry.as_ptr()).vacant).write(Some(self.next));
+            *value = Entry::Vacant(self.next);
         }
 
         self.len -= 1;
@@ -146,7 +221,7 @@ impl<T> Storage<T> {
         // SAFETY: We're just decrementing the reference count of each entry
         // before dropping the storage of the slab.
         unsafe {
-            for &entry in &self.entries {
+            for &entry in &self.tasks {
                 if entry.as_ref().header.decrement_ref() {
                     // SAFETY: We're the only ones holding a reference to the
                     // entry, so it's safe to drop it.
@@ -154,36 +229,35 @@ impl<T> Storage<T> {
                 }
             }
 
-            self.entries.set_len(0);
+            self.tasks.set_len(0);
         }
     }
 
     /// Insert a value at the given slot.
-    fn insert_at(&mut self, key: usize, val: T) {
-        if key >= self.entries.len() {
-            self.entries.reserve(key - self.entries.len() + 1);
+    fn insert_at(&mut self, key: usize, value: T) {
+        if key >= self.tasks.len() {
+            self.tasks.reserve(key - self.tasks.len() + 1);
 
-            for index in self.entries.len()..=key {
-                self.entries.push(NonNull::from(Box::leak(Box::new(Entry {
+            for index in self.tasks.len()..=key {
+                self.tasks.push(NonNull::from(Box::leak(Box::new(Task {
                     header: Header::new(self.shared.clone(), index),
-                    vacant: None,
-                    value: None,
+                    entry: Entry::None,
                 }))));
             }
         }
 
-        let entry = *self.entries.get(key).unwrap();
+        let task = *self.tasks.get(key).unwrap();
 
         // SAFETY: We have mutable access to the given entry, but we are careful
         // not to dereference the header mutably, since that might be shared.
         unsafe {
-            self.next = match ptr::addr_of_mut!((*entry.as_ptr()).vacant).replace(None) {
-                None => key + 1,
-                Some(next) => next,
+            self.next = match ptr::addr_of_mut!((*task.as_ptr()).entry).replace(Entry::Some(value))
+            {
+                Entry::None => key + 1,
+                Entry::Vacant(next) => next,
+                _ => unreachable!(),
             };
 
-            let existing = ptr::addr_of_mut!((*entry.as_ptr()).value).replace(Some(val));
-            assert!(existing.is_none(), "Entry already occupied");
             self.len += 1;
         }
     }

@@ -1,4 +1,4 @@
-use crate::storage::Storage;
+use crate::task::Storage;
 
 #[cfg(not(miri))]
 const AMOUNT: usize = 1024;

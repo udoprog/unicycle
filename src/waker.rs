@@ -13,14 +13,10 @@
 use std::cell::UnsafeCell;
 use std::mem::ManuallyDrop;
 use std::ptr::{self, NonNull};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::task::{Context, RawWaker, RawWakerVTable, Waker};
 
 use crate::lock::RwLock;
-use crate::Shared;
-
-const MAX_REFCOUNT: usize = (isize::MAX) as usize;
+use crate::task::Header;
 
 /// Wrap the current context in one that updates the local WakeSet.
 /// This takes the shared data by reference and uses `RefWaker::VTABLE`.
@@ -50,7 +46,7 @@ fn header_to_raw_waker(header: NonNull<Header>) -> RawWaker {
         {
             let header = header.as_ref();
             let shared = header.shared();
-            shared.wake_set.wake(header.index);
+            shared.wake_set.wake(header.index());
             shared.waker.wake_by_ref();
         }
 
@@ -62,7 +58,7 @@ fn header_to_raw_waker(header: NonNull<Header>) -> RawWaker {
     unsafe fn wake_by_ref(ptr: *const ()) {
         let header = &*(ptr as *const Header);
         let shared = header.shared();
-        shared.wake_set.wake(header.index);
+        shared.wake_set.wake(header.index());
         shared.waker.wake_by_ref();
     }
 
@@ -75,53 +71,6 @@ fn header_to_raw_waker(header: NonNull<Header>) -> RawWaker {
     }
 
     RawWaker::new(header.as_ptr().cast_const().cast(), VTABLE)
-}
-
-/// A header is basically a pointer to the shared state combined with the index we wish to poll.
-pub(crate) struct Header {
-    /// A pointer to the [Shared] task data.
-    shared: Arc<Shared>,
-    /// The index of the task this waker will wake.
-    index: usize,
-    /// Reference count of the header.
-    reference_count: AtomicUsize,
-}
-
-impl Header {
-    /// Construct a new waker.
-    pub(crate) fn new(shared: Arc<Shared>, index: usize) -> Self {
-        Self {
-            shared,
-            index,
-            reference_count: AtomicUsize::new(1),
-        }
-    }
-
-    /// Access shared storage from header.
-    pub(crate) fn shared(&self) -> &Shared {
-        &self.shared
-    }
-
-    /// Increment ref count of stored entry.
-    fn increment_ref(&self) {
-        let existing = self.reference_count.fetch_add(1, Ordering::SeqCst);
-
-        if existing > MAX_REFCOUNT {
-            std::process::abort();
-        }
-    }
-
-    /// Decrement ref count of stored entry, returns `true` if the entry should be deallocated.
-    pub(crate) unsafe fn decrement_ref(&self) -> bool {
-        let count = self.reference_count.fetch_sub(1, Ordering::SeqCst);
-        count == 1
-    }
-
-    /// Deallocate the entry associated with the header.
-    pub(crate) unsafe fn deallocate(ptr: NonNull<Header>) {
-        let drop_entry = ptr.as_ref().shared.drop_entry;
-        drop_entry(ptr.as_ptr().cast_const().cast());
-    }
 }
 
 pub(crate) struct SharedWaker {
@@ -205,7 +154,7 @@ fn noop_raw_waker() -> RawWaker {
 
 #[cfg(test)]
 mod test {
-    use crate::storage::Storage;
+    use crate::task::Storage;
     use crate::FuturesUnordered;
 
     use super::poll_with_ref;
