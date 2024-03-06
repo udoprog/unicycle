@@ -147,7 +147,11 @@ impl<T> Storage<T> {
         // before dropping the storage of the slab.
         unsafe {
             for &entry in &self.entries {
-                Header::decrement_ref(entry.cast());
+                if entry.as_ref().header.decrement_ref() {
+                    // SAFETY: We're the only ones holding a reference to the
+                    // entry, so it's safe to drop it.
+                    _ = Box::from_raw(entry.as_ptr());
+                }
             }
 
             self.entries.set_len(0);
