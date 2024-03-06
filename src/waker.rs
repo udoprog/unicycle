@@ -13,12 +13,14 @@
 use std::cell::UnsafeCell;
 use std::mem::ManuallyDrop;
 use std::ptr::{self, NonNull};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, RawWaker, RawWakerVTable, Waker};
 
 use crate::lock::RwLock;
 use crate::Shared;
+
+const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 
 /// Wrap the current context in one that updates the local WakeSet.
 /// This takes the shared data by reference and uses `RefWaker::VTABLE`.
@@ -52,7 +54,9 @@ fn header_to_raw_waker(header: NonNull<Header>) -> RawWaker {
             shared.waker.wake_by_ref();
         }
 
-        Header::decrement_ref(header);
+        if header.as_ref().decrement_ref() {
+            Header::deallocate(header);
+        }
     }
 
     unsafe fn wake_by_ref(ptr: *const ()) {
@@ -64,7 +68,10 @@ fn header_to_raw_waker(header: NonNull<Header>) -> RawWaker {
 
     unsafe fn drop(ptr: *const ()) {
         let header = NonNull::new_unchecked(ptr.cast_mut().cast::<Header>());
-        Header::decrement_ref(header);
+
+        if header.as_ref().decrement_ref() {
+            Header::deallocate(header);
+        }
     }
 
     RawWaker::new(header.as_ptr().cast_const().cast(), VTABLE)
@@ -97,21 +104,23 @@ impl Header {
 
     /// Increment ref count of stored entry.
     fn increment_ref(&self) {
-        self.reference_count
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let existing = self.reference_count.fetch_add(1, Ordering::SeqCst);
+
+        if existing > MAX_REFCOUNT {
+            std::process::abort();
+        }
     }
 
     /// Decrement ref count of stored entry, returns `true` if the entry should be deallocated.
-    pub(crate) unsafe fn decrement_ref(ptr: NonNull<Header>) {
-        let count = ptr
-            .as_ref()
-            .reference_count
-            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    pub(crate) unsafe fn decrement_ref(&self) -> bool {
+        let count = self.reference_count.fetch_sub(1, Ordering::SeqCst);
+        count == 1
+    }
 
-        if count == 1 {
-            let drop_entry = ptr.as_ref().shared.drop_entry;
-            drop_entry(ptr.as_ptr().cast_const().cast());
-        }
+    /// Deallocate the entry associated with the header.
+    pub(crate) unsafe fn deallocate(ptr: NonNull<Header>) {
+        let drop_entry = ptr.as_ref().shared.drop_entry;
+        drop_entry(ptr.as_ptr().cast_const().cast());
     }
 }
 
