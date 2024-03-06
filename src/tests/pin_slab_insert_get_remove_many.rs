@@ -1,4 +1,4 @@
-use unicycle::pin_slab::PinSlab;
+use crate::storage::Storage;
 
 #[cfg(not(miri))]
 const AMOUNT: usize = 1024;
@@ -7,7 +7,7 @@ const AMOUNT: usize = 128;
 
 #[test]
 fn pin_slab_insert_get_remove_many() {
-    let mut slab = PinSlab::new();
+    let mut slab = Storage::new();
 
     let mut keys = Vec::new();
 
@@ -16,7 +16,7 @@ fn pin_slab_insert_get_remove_many() {
     }
 
     for (expected, key) in keys.iter().copied() {
-        let value = slab.get_pin_mut(key).expect("value to exist");
+        let (_, value) = slab.get_pin_mut(key).expect("value to exist");
         assert_eq!(expected, **value.as_ref());
         assert!(slab.remove(key));
     }

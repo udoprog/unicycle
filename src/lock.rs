@@ -2,27 +2,6 @@
 mod internals {
     //! Manual implementation using atomics.
     use std::sync::atomic::{AtomicIsize, Ordering};
-    pub use std::sync::MutexGuard;
-
-    pub struct Mutex<T> {
-        sys: std::sync::Mutex<T>,
-    }
-
-    impl<T> Mutex<T> {
-        /// Construct a new mutex.
-        pub fn new(value: T) -> Self {
-            Self {
-                sys: std::sync::Mutex::new(value),
-            }
-        }
-    }
-
-    impl<T> Mutex<T> {
-        /// Lock the given mutex and return the guard.
-        pub fn lock(&self) -> MutexGuard<'_, T> {
-            self.sys.lock().unwrap()
-        }
-    }
 
     /// A simplified RwLock implementation which only supports voluntary locking.
     #[repr(C)]
@@ -111,7 +90,6 @@ mod internals {
 mod internals {
     //! Implementation using raw locks from parking_lot.
     use lock_api::RawRwLock as _;
-    pub use parking_lot::Mutex;
 
     /// A simplified RwLock implementation which only supports voluntary locking.
     pub struct RwLock {
@@ -166,7 +144,6 @@ mod internals {
     }
 }
 
-pub use self::internals::Mutex;
 pub use self::internals::RwLock;
 
 impl RwLock {

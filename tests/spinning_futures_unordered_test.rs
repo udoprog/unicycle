@@ -5,7 +5,7 @@ use futures::future::poll_fn;
 use futures::stream::Stream;
 use std::cell::Cell;
 use std::future::Future;
-use std::pin::Pin;
+use std::pin::{pin, Pin};
 use std::task::{Context, Poll};
 
 struct Spinner<'a>(&'a Cell<usize>);
@@ -35,12 +35,12 @@ async fn test_spinning_unordered() {
 
     let mut futures = FuturesUnordered::new();
     futures.push(Spinner(&count));
-    pin_utils::pin_mut!(futures);
+    let mut futures = pin!(futures);
 
     poll_fn::<(), _>(move |cx| {
         // NB: needs to be polled twice to cause the bitsets to be swapped out.
-        assert_eq!(Poll::Pending, Pin::new(&mut futures).poll_next(cx));
-        let _ = Pin::new(&mut futures).poll_next(cx);
+        assert_eq!(Poll::Pending, futures.as_mut().poll_next(cx));
+        let _ = futures.as_mut().poll_next(cx);
         Poll::Ready(())
     })
     .await;

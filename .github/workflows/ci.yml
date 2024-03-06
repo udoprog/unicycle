@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: ["1.57", stable]
+        rust: ["1.68", stable]
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@master
@@ -55,5 +55,4 @@ jobs:
     - uses: dtolnay/rust-toolchain@nightly
       with:
         components: miri
-    - run: cargo miri test -- pin_vec
-    - run: cargo miri test -- pin_slab
+    - run: cargo miri test -- storage tests waker

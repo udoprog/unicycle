@@ -118,18 +118,10 @@ behavior of one particular task.
 
 ## Architecture
 
-The [Unordered] type stores all futures being polled in a [PinSlab]
-(Inspired by the [slab] crate). A slab is capable of utomatically reclaiming
-storage at low cost, and will maintain decent memory locality. A [PinSlab]
-is different from a [Slab] in how it allocates the memory regions it uses to
-store objects. While a regular [Slab] is simply backed by a vector which
-grows as appropriate, this approach is not viable for pinning, since it
-would cause the objects to move while being reallocated. Instead [PinSlab]
-maintains a growable collection of fixed-size memory regions, allowing it to
-store and reference immovable objects through the [pin API]. Each future
-inserted into the slab is assigned an _index_, which we will be using below.
-We now call the inserted future a _task_, and you can think of this index as
-a unique task identifier.
+The [Unordered] type stores all futures being polled in a continuous storage
+[slab] where each future is stored in a separate allocation. The header of
+this storage is atomically reference counted and can be used to construct a
+waker without additional allocation.
 
 Next to the slab we maintain two [BitSets][BitSet], one _active_ and one
 _alternate_. When a task registers interest in waking up, the bit associated
@@ -152,7 +144,6 @@ we start the cycle over again.
 [limiting the amount FuturesUnordered is allowed to spin]: https://github.com/rust-lang/futures-rs/pull/2049
 [parking_lot]: https://crates.io/crates/parking_lot
 [pin API]: https://doc.rust-lang.org/std/pin/index.html
-[PinSlab]: https://docs.rs/unicycle/latest/unicycle/pin_slab/struct.PinSlab.html
 [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
 [reported by Jon Gjengset]: https://github.com/rust-lang/futures-rs/issues/2047
 [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
