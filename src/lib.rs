@@ -115,18 +115,10 @@
 //!
 //! ## Architecture
 //!
-//! The [Unordered] type stores all futures being polled in a [PinSlab]
-//! (Inspired by the [slab] crate). A slab is capable of utomatically reclaiming
-//! storage at low cost, and will maintain decent memory locality. A [PinSlab]
-//! is different from a [Slab] in how it allocates the memory regions it uses to
-//! store objects. While a regular [Slab] is simply backed by a vector which
-//! grows as appropriate, this approach is not viable for pinning, since it
-//! would cause the objects to move while being reallocated. Instead [PinSlab]
-//! maintains a growable collection of fixed-size memory regions, allowing it to
-//! store and reference immovable objects through the [pin API]. Each future
-//! inserted into the slab is assigned an _index_, which we will be using below.
-//! We now call the inserted future a _task_, and you can think of this index as
-//! a unique task identifier.
+//! The [Unordered] type stores all futures being polled in a continuous storage
+//! [slab] where each future is stored in a separate allocation. The header of
+//! this storage is atomically reference counted and can be used to construct a
+//! waker without additional allocation.
 //!
 //! Next to the slab we maintain two [BitSets][BitSet], one _active_ and one
 //! _alternate_. When a task registers interest in waking up, the bit associated
@@ -149,7 +141,6 @@
 //! [limiting the amount FuturesUnordered is allowed to spin]: https://github.com/rust-lang/futures-rs/pull/2049
 //! [parking_lot]: https://crates.io/crates/parking_lot
 //! [pin API]: https://doc.rust-lang.org/std/pin/index.html
-//! [PinSlab]: https://docs.rs/unicycle/latest/unicycle/pin_slab/struct.PinSlab.html
 //! [Ready]: https://doc.rust-lang.org/std/task/enum.Poll.html
 //! [reported by Jon Gjengset]: https://github.com/rust-lang/futures-rs/issues/2047
 //! [Slab]: https://docs.rs/slab/latest/slab/struct.Slab.html
@@ -164,9 +155,9 @@
 #![allow(clippy::should_implement_trait)]
 
 mod lock;
-pub mod pin_slab;
-#[doc(hidden)]
-pub mod pin_vec;
+pub mod storage;
+#[cfg(test)]
+mod tests;
 mod wake_set;
 mod waker;
 
@@ -176,12 +167,10 @@ use std::marker;
 use std::mem;
 use std::pin::Pin;
 use std::ptr;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 use uniset::BitSet;
-use waker::InternalWakers;
 
-use self::pin_slab::PinSlab;
+use self::storage::{Entry, Storage};
 use self::wake_set::{SharedWakeSet, WakeSet};
 use self::waker::SharedWaker;
 #[cfg(feature = "futures-rs")]
@@ -228,17 +217,22 @@ struct Shared {
     waker: SharedWaker,
     /// The currently registered wake set.
     wake_set: SharedWakeSet,
-    /// The collection of all wakers currently or previously in use.
-    all_wakers: InternalWakers,
+    /// Function to use when dropping an entry from a header, since the header
+    /// is unaware of its own layout.
+    drop_entry: unsafe fn(*const ()),
 }
 
 impl Shared {
     /// Construct new shared data.
-    fn new() -> Self {
+    fn new<T>() -> Self {
+        unsafe fn drop_entry_glue<T>(ptr: *const ()) {
+            _ = Box::from_raw(ptr.cast_mut().cast::<Entry<T>>());
+        }
+
         Self {
             waker: SharedWaker::new(),
             wake_set: SharedWakeSet::new(),
-            all_wakers: InternalWakers::new(),
+            drop_entry: drop_entry_glue::<T>,
         }
     }
 
@@ -319,6 +313,9 @@ impl Shared {
     }
 }
 
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
 mod private {
     pub trait Sealed {}
 
@@ -376,11 +373,7 @@ where
     /// Slab of futures being polled.
     /// They need to be pinned on the heap, since the slab might grow to
     /// accomodate more futures.
-    slab: PinSlab<T>,
-    /// Shared parent waker.
-    /// Includes the current wake target. Each time we poll, we swap back and
-    /// forth between this and `alternate`.
-    shared: Arc<Shared>,
+    slab: Storage<T>,
     /// Alternate wake set, used for growing the existing set when futures are
     /// added. This is then swapped out with the active set to receive polls.
     alternate: *mut WakeSet,
@@ -508,7 +501,6 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T::Output>> {
         let Self {
             ref mut slab,
-            ref shared,
             ref mut alternate,
             ..
         } = *self.as_mut();
@@ -520,7 +512,8 @@ where
 
         // Safety: We have exclusive access to Unordered, which is the only
         // implementation that is trying to swap the wake sets.
-        let (non_empty, wake_last) = ready!(unsafe { shared.poll_swap_active(cx, alternate) });
+        let (non_empty, wake_last) =
+            ready!(unsafe { slab.shared().poll_swap_active(cx, alternate) });
 
         for index in wake_last.drain() {
             // NB: Since we defer pollables a little, a future might
@@ -529,14 +522,14 @@ where
             // If on the other hand it was removed _and_ re-added, we have
             // a case of a spurious poll. Luckily, that doesn't bother a
             // future much.
-            let fut = match slab.get_pin_mut(index) {
-                Some(fut) => fut,
+            let (header, fut) = match slab.get_pin_mut(index) {
+                Some(value) => value,
                 None => continue,
             };
 
             // Construct a new lightweight waker only capable of waking by
             // reference, with referential access to `shared`.
-            let result = self::waker::poll_with_ref(shared, index, move |cx| fut.poll(cx));
+            let result = self::waker::poll_with_ref(header, move |cx| fut.poll(cx));
 
             if let Poll::Ready(result) = result {
                 let removed = slab.remove(index);
@@ -566,11 +559,26 @@ where
     #[inline(always)]
     fn new_internal() -> Self {
         Self {
-            slab: PinSlab::new(),
-            shared: Arc::new(Shared::new()),
+            slab: Storage::new(),
             alternate: Box::into_raw(Box::new(WakeSet::locked())),
             _marker: marker::PhantomData,
         }
+    }
+
+    /// Get the number of elements in the collection of futures.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::future::Ready;
+    /// use unicycle::FuturesUnordered;
+    ///
+    /// let mut futures = FuturesUnordered::<Ready<()>>::new();
+    /// assert_eq!(futures.len(), 0);
+    /// assert!(futures.is_empty());
+    /// ```
+    pub fn len(&self) -> usize {
+        self.slab.len()
     }
 
     /// Test if the collection of futures is empty.
@@ -632,7 +640,10 @@ where
         // futures.
         // Safety: We have unique access to the alternate set being modified.
         unsafe {
-            self.shared.swap_active(&mut self.alternate).reserve(new);
+            self.slab
+                .shared()
+                .swap_active(&mut self.alternate)
+                .reserve(new);
         }
 
         index
@@ -661,7 +672,7 @@ where
     /// }
     /// ```
     pub fn get_pin_mut(&mut self, index: usize) -> Option<Pin<&mut T>> {
-        self.slab.get_pin_mut(index)
+        Some(self.slab.get_pin_mut(index)?.1)
     }
 
     /// Get a mutable reference to the stream or future at the given index.
@@ -713,7 +724,7 @@ where
         // to both wakers. Unfortunately that means that at this point, any call
         // to wakes will have to serialize behind the shared wake set while the
         // alternate set is being dropped.
-        let _write = self.shared.wake_set.prevent_drop_write();
+        let _write = self.slab.shared().wake_set.prevent_drop_write();
 
         // Safety: we uniquely own `alternate`, so we are responsible for
         // dropping it. This is asserted when we swap it out during a poll by
@@ -947,7 +958,6 @@ cfg_futures_rs! {
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             let Self {
                 ref mut slab,
-                ref shared,
                 ref mut alternate,
                 ..
             } = *self.as_mut();
@@ -959,7 +969,7 @@ cfg_futures_rs! {
 
             // Safety: We have exclusive access to Unordered, which is the only
             // implementation that is trying to swap the wake sets.
-            let (non_empty, wake_last) = ready!(unsafe { shared.poll_swap_active(cx, alternate) });
+            let (non_empty, wake_last) = ready!(unsafe { slab.shared().poll_swap_active(cx, alternate) });
 
             for index in wake_last.drain() {
                 // NB: Since we defer pollables a little, a future might
@@ -968,20 +978,20 @@ cfg_futures_rs! {
                 // If on the other hand it was removed _and_ re-added, we have
                 // a case of a spurious poll. Luckily, that doesn't bother a
                 // future much.
-                let stream = match slab.get_pin_mut(index) {
-                    Some(stream) => stream,
+                let (header, stream) = match slab.get_pin_mut(index) {
+                    Some(value) => value,
                     None => continue,
                 };
 
                 // Construct a new lightweight waker only capable of waking by
                 // reference, with referential access to `shared`.
-                let result = self::waker::poll_with_ref(shared, index, move |cx| stream.poll_next(cx));
+                let result = self::waker::poll_with_ref(header, move |cx| stream.poll_next(cx));
 
                 if let Poll::Ready(result) = result {
                     match result {
                         Some(value) => {
                             cx.waker().wake_by_ref();
-                            shared.wake_set.wake(index);
+                            slab.shared().wake_set.wake(index);
                             return Poll::Ready(Some(value));
                         }
                         None => {
@@ -1017,7 +1027,6 @@ cfg_futures_rs! {
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             let Self {
                 ref mut slab,
-                ref shared,
                 ref mut alternate,
                 ..
             } = *self.as_mut();
@@ -1029,7 +1038,7 @@ cfg_futures_rs! {
 
             // Safety: We have exclusive access to Unordered, which is the only
             // implementation that is trying to swap the wake sets.
-            let (non_empty, wake_last) = ready!(unsafe { shared.poll_swap_active(cx, alternate) });
+            let (non_empty, wake_last) = ready!(unsafe { slab.shared().poll_swap_active(cx, alternate) });
 
             for index in wake_last.drain() {
                 // NB: Since we defer pollables a little, a future might
@@ -1038,20 +1047,20 @@ cfg_futures_rs! {
                 // If on the other hand it was removed _and_ re-added, we have
                 // a case of a spurious poll. Luckily, that doesn't bother a
                 // future much.
-                let stream = match slab.get_pin_mut(index) {
-                    Some(stream) => stream,
+                let (header, stream) = match slab.get_pin_mut(index) {
+                    Some((header, stream)) => (header, stream),
                     None => continue,
                 };
 
                 // Construct a new lightweight waker only capable of waking by
                 // reference, with referential access to `shared`.
-                let result = self::waker::poll_with_ref(shared, index, move |cx| stream.poll_next(cx));
+                let result = self::waker::poll_with_ref(header, move |cx| stream.poll_next(cx));
 
                 if let Poll::Ready(result) = result {
                     match result {
                         Some(value) => {
                             cx.waker().wake_by_ref();
-                            shared.wake_set.wake(index);
+                            slab.shared().wake_set.wake(index);
                             return Poll::Ready(Some((index, Some(value))));
                         }
                         None => {

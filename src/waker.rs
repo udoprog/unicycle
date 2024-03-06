@@ -11,171 +11,107 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 
 use std::cell::UnsafeCell;
-use std::mem::{self, ManuallyDrop};
+use std::mem::ManuallyDrop;
 use std::ptr::{self, NonNull};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::task::{Context, RawWaker, RawWakerVTable, Waker};
 
-use crate::lock::{Mutex, RwLock};
-use crate::pin_vec::PinVec;
+use crate::lock::RwLock;
 use crate::Shared;
 
 /// Wrap the current context in one that updates the local WakeSet.
 /// This takes the shared data by reference and uses `RefWaker::VTABLE`.
 ///
 /// It works because we don't drop the waker inside of this function.
-pub(crate) fn poll_with_ref<F, R>(shared: &Arc<Shared>, index: usize, f: F) -> R
+pub(crate) fn poll_with_ref<F, R>(header: NonNull<Header>, f: F) -> R
 where
     F: FnOnce(&mut Context<'_>) -> R,
 {
-    // Need to assigned owned a fixed location, so do not move it from here for the duration of the poll.
-    let internals = InternalWaker::new(NonNull::from(shared.as_ref()), index);
-
-    // Safety: as_raw_waker() returns an object that upholds the right RawWaker contract.
-    let waker = unsafe { Waker::from_raw(internals.as_waker_ref().into()) };
-    let waker = ManuallyDrop::new(waker);
+    // SAFETY: as_raw_waker() returns an object that upholds the right RawWaker contract.
+    let waker = ManuallyDrop::new(unsafe { Waker::from_raw(header_to_raw_waker(header)) });
     let mut cx = Context::from_waker(&waker);
     f(&mut cx)
 }
 
-/// A collection of [InternalWaker]s owned by a [Shared] task structure.
-pub(crate) struct InternalWakers {
-    wakers: Mutex<PinVec<InternalWaker>>,
-}
+fn header_to_raw_waker(header: NonNull<Header>) -> RawWaker {
+    const VTABLE: &RawWakerVTable = &RawWakerVTable::new(clone, wake, wake_by_ref, drop);
 
-impl InternalWakers {
-    pub fn new() -> Self {
-        Self {
-            wakers: Mutex::new(PinVec::new()),
-        }
+    unsafe fn clone(ptr: *const ()) -> RawWaker {
+        (*ptr.cast::<Header>()).increment_ref();
+        RawWaker::new(ptr, VTABLE)
     }
+
+    unsafe fn wake(ptr: *const ()) {
+        let header = NonNull::new_unchecked(ptr.cast_mut().cast::<Header>());
+
+        {
+            let header = header.as_ref();
+            let shared = header.shared();
+            shared.wake_set.wake(header.index);
+            shared.waker.wake_by_ref();
+        }
+
+        Header::decrement_ref(header);
+    }
+
+    unsafe fn wake_by_ref(ptr: *const ()) {
+        let header = &*(ptr as *const Header);
+        let shared = header.shared();
+        shared.wake_set.wake(header.index);
+        shared.waker.wake_by_ref();
+    }
+
+    unsafe fn drop(ptr: *const ()) {
+        let header = NonNull::new_unchecked(ptr.cast_mut().cast::<Header>());
+        Header::decrement_ref(header);
+    }
+
+    RawWaker::new(header.as_ptr().cast_const().cast(), VTABLE)
 }
 
-struct InternalWaker {
+/// A header is basically a pointer to the shared state combined with the index we wish to poll.
+pub(crate) struct Header {
     /// A pointer to the [Shared] task data.
-    ///
-    /// This is actually an Arc, so it's possible to do increment_strong_count and
-    /// decrement_strong_count on it.
-    ///
-    /// Note that the [InternalWaker] itself doesn't have a strong reference to [Shared], because
-    /// the [InternalWaker] is assumed to be contained in the [Shared] via [InternalWakers]. Using
-    /// a strong reference would create a cycle leading to the [Shared] and all its wakers leaking.
-    ///
-    /// Instead, we increment and decrement the ref count on [Shared] when creating and dropping
-    /// an [InternalWakerRef] that refers to this waker. This is done so that cloning an
-    /// [InternalWaker] (technically cloning an [InternalWakerRef]) can be done without any new
-    /// heap allocations.
-    shared: NonNull<Shared>,
+    shared: Arc<Shared>,
     /// The index of the task this waker will wake.
     index: usize,
+    /// Reference count of the header.
+    reference_count: AtomicUsize,
 }
 
-impl InternalWaker {
+impl Header {
     /// Construct a new waker.
-    fn new(shared: NonNull<Shared>, index: usize) -> Self {
-        Self { shared, index }
-    }
-
-    /// Construct a new internal waker reference.
-    /// Caller must ensure that the internal waker has the appropriate lifetime.
-    fn as_shared_waker_ref(&self) -> InternalWakerRef {
-        InternalWakerRef::from_waker(self)
-    }
-
-    fn as_waker_ref(&self) -> InternalWakerRef {
-        InternalWakerRef(NonNull::from(self))
-    }
-
-    fn shared(&self) -> &Shared {
-        // Safety: self.shared is known to point to a valid Shared by construction
-        unsafe { self.shared.as_ref() }
-    }
-}
-
-#[repr(transparent)]
-struct InternalWakerRef(NonNull<InternalWaker>);
-
-impl InternalWakerRef {
-    /// Get a new reference counted internal waker.
-    unsafe fn get_shared_waker(shared: NonNull<Shared>, index: usize) -> Self {
-        let mut all_wakers = shared.as_ref().all_wakers.wakers.lock();
-
-        if all_wakers.len() <= index {
-            let len = all_wakers.len();
-            all_wakers.extend((len..index + 1).map(|i| InternalWaker::new(shared, i)));
+    pub(crate) fn new(shared: Arc<Shared>, index: usize) -> Self {
+        Self {
+            shared,
+            index,
+            reference_count: AtomicUsize::new(1),
         }
-
-        all_wakers[index].as_shared_waker_ref()
     }
 
-    /// Construct from an existing internal waker.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure that the internal waker has the appropriate lifetime.
-    fn from_waker(waker: &InternalWaker) -> Self {
-        // SAFETY: we know that this is constructed from a legal Arc instance,
-        // since it's all handled internally.
-        unsafe {
-            Arc::increment_strong_count(waker.shared.as_ptr());
+    /// Access shared storage from header.
+    pub(crate) fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
+    /// Increment ref count of stored entry.
+    fn increment_ref(&self) {
+        self.reference_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Decrement ref count of stored entry, returns `true` if the entry should be deallocated.
+    pub(crate) unsafe fn decrement_ref(ptr: NonNull<Header>) {
+        let count = ptr
+            .as_ref()
+            .reference_count
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+
+        if count == 1 {
+            let drop_entry = ptr.as_ref().shared.drop_entry;
+            drop_entry(ptr.as_ptr().cast_const().cast());
         }
-
-        InternalWakerRef(NonNull::from(waker))
-    }
-
-    fn internals(&self) -> &InternalWaker {
-        // Safety: InternalWakerRef points to an InternalWaker by construction
-        unsafe { self.0.as_ref() }
-    }
-
-    const VTABLE: &'static RawWakerVTable = &RawWakerVTable::new(
-        Self::clone_unchecked,
-        Self::wake_unchecked,
-        Self::wake_by_ref_unchecked,
-        Self::drop_unchecked,
-    );
-
-    unsafe fn clone_unchecked(ptr: *const ()) -> RawWaker {
-        let this: ManuallyDrop<InternalWakerRef> = mem::transmute(ptr);
-        InternalWakerRef::get_shared_waker(
-            this.internals().shared,
-            this.internals().index,
-        )
-        .into()
-    }
-
-    unsafe fn wake_by_ref_unchecked(this: *const ()) {
-        let this: ManuallyDrop<InternalWakerRef> = mem::transmute(this);
-        let internals = this.internals();
-        internals.shared().wake_set.wake(internals.index);
-        internals.shared().waker.wake_by_ref();
-    }
-
-    unsafe fn wake_unchecked(this: *const ()) {
-        let this: InternalWakerRef = mem::transmute(this);
-        let internals = this.internals();
-        internals.shared().wake_set.wake(internals.index);
-        internals.shared().waker.wake_by_ref();
-    }
-
-    unsafe fn drop_unchecked(this: *const ()) {
-        let _this: InternalWakerRef = mem::transmute(this);
-    }
-}
-
-impl From<InternalWakerRef> for RawWaker {
-    fn from(val: InternalWakerRef) -> Self {
-        let waker = RawWaker::new(val.0.as_ptr() as *const _, InternalWakerRef::VTABLE);
-        mem::forget(val); // val will be dropped from RawWaker's vtable
-        waker
-    }
-}
-
-impl Drop for InternalWakerRef {
-    fn drop(&mut self) {
-        // Safety: internals.shared is actually an Arc<Shared>. The ref count was incremented
-        // when self was constructed, so now we clean it up
-        unsafe { Arc::decrement_strong_count(self.internals().shared.as_ptr()) }
     }
 }
 
@@ -260,30 +196,34 @@ fn noop_raw_waker() -> RawWaker {
 
 #[cfg(test)]
 mod test {
-    use super::poll_with_ref;
+    use crate::storage::Storage;
     use crate::FuturesUnordered;
-    use crate::Shared;
+
+    use super::poll_with_ref;
+
     use futures::future::poll_fn;
     use futures::Future;
     use std::cell::RefCell;
     use std::mem;
     use std::pin::Pin;
     use std::rc::Rc;
-    use std::sync::Arc;
     use std::task::Context;
     use std::task::{Poll, Waker};
 
     #[test]
     fn basic_waker() {
-        let shared = Arc::new(Shared::new());
-        let index = 0;
+        let mut slab = Storage::new();
+        slab.insert(());
 
-        poll_with_ref(&shared, index, |_| ())
+        let (header, _) = slab.get_pin_mut(0).unwrap();
+
+        poll_with_ref(header, |_| ())
     }
 
     #[test]
     fn clone_waker() {
         struct GetWaker;
+
         impl Future for GetWaker {
             type Output = Waker;
 
@@ -298,7 +238,6 @@ mod test {
         block_on::block_on(async {
             let mut futures = FuturesUnordered::new();
             futures.push(GetWaker);
-
             futures.next().await.unwrap();
         });
     }
@@ -451,11 +390,9 @@ mod test {
         //! Taken from https://doc.rust-lang.org/std/task/trait.Wake.html#examples
 
         use futures::Future;
-        use std::{
-            sync::Arc,
-            task::{Context, Poll, Wake},
-            thread::{self, Thread},
-        };
+        use std::sync::Arc;
+        use std::task::{Context, Poll, Wake};
+        use std::thread::{self, Thread};
 
         /// A waker that wakes up the current thread when called.
         struct ThreadWaker(Thread);

@@ -1,4 +1,4 @@
-use unicycle::pin_slab::PinSlab;
+use crate::storage::Storage;
 
 struct Foo(u32);
 
@@ -6,9 +6,9 @@ struct Bar(Vec<u32>);
 
 #[test]
 fn test_pin_slab_memory_leak() {
-    let mut copy = PinSlab::new();
+    let mut copy = Storage::new();
     copy.insert(Foo(42));
 
-    let mut non_copy = PinSlab::new();
+    let mut non_copy = Storage::new();
     non_copy.insert(Bar(vec![42]));
 }
