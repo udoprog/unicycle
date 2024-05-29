@@ -120,7 +120,7 @@ impl SharedWaker {
         }
 
         if let Some(_guard) = self.lock.try_lock_exclusive_guard() {
-            *self.waker.get() = waker.clone();
+            (*self.waker.get()).clone_from(waker);
             return true;
         }
 

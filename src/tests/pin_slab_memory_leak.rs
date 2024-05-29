@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::task::Storage;
 
 struct Foo(u32);
