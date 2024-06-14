@@ -314,14 +314,14 @@ mod test {
                 poll_fn: |this, cx| {
                     // Safety: this is self.future (see the poll implementation below), which
                     // is a Box<F>. Boxes never move, so we can treat it as a pinned reference.
-                    let this = unsafe { mem::transmute::<_, Pin<&mut F>>(this) };
+                    let this = unsafe { mem::transmute::<*const (), Pin<&mut F>>(this) };
                     this.poll(cx)
                 },
                 drop_fn: |this| {
                     // Safety: this is self.future (see the drop implementation below), which is a
                     // Box<F>.
                     unsafe {
-                        mem::transmute::<_, Pin<Box<F>>>(this);
+                        mem::transmute::<*const (), Pin<Box<F>>>(this);
                     }
                 },
             }
