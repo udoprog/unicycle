@@ -1,6 +1,6 @@
 [package]
 name = "unicycle"
-version = "0.10.1"
+version = "0.10.2"
 authors = ["John-John Tedro <udoprog@tedro.se>"]
 edition = "2021"
 rust-version = "1.68"

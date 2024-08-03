@@ -37,49 +37,45 @@ should consider putting it in production.
 ## Examples
 
 ```rust
-use tokio::time;
 use std::time::Duration;
+
+use tokio::time;
 use unicycle::FuturesUnordered;
 
-#[tokio::main]
-async fn main() {
-    let mut futures = FuturesUnordered::new();
+let mut futures = FuturesUnordered::new();
 
-    futures.push(time::sleep(Duration::from_secs(2)));
-    futures.push(time::sleep(Duration::from_secs(3)));
-    futures.push(time::sleep(Duration::from_secs(1)));
+futures.push(time::sleep(Duration::from_secs(2)));
+futures.push(time::sleep(Duration::from_secs(3)));
+futures.push(time::sleep(Duration::from_secs(1)));
 
-    while let Some(_) = futures.next().await {
-        println!("tick");
-    }
-
-    println!("done!");
+while let Some(_) = futures.next().await {
+    println!("tick");
 }
+
+println!("done!");
 ```
 
 [Unordered] types can be created from iterators:
 
 ```rust
-use tokio::time;
 use std::time::Duration;
+
+use tokio::time;
 use unicycle::FuturesUnordered;
 
-#[tokio::main]
-async fn main() {
-    let mut futures = Vec::new();
+let mut futures = Vec::new();
 
-    futures.push(time::sleep(Duration::from_secs(2)));
-    futures.push(time::sleep(Duration::from_secs(3)));
-    futures.push(time::sleep(Duration::from_secs(1)));
+futures.push(time::sleep(Duration::from_secs(2)));
+futures.push(time::sleep(Duration::from_secs(3)));
+futures.push(time::sleep(Duration::from_secs(1)));
 
-    let mut futures = futures.into_iter().collect::<FuturesUnordered<_>>();
+let mut futures = futures.into_iter().collect::<FuturesUnordered<_>>();
 
-    while let Some(_) = futures.next().await {
-        println!("tick");
-    }
-
-    println!("done!");
+while let Some(_) = futures.next().await {
+    println!("tick");
 }
+
+println!("done!");
 ```
 
 <br>
