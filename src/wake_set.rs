@@ -1,7 +1,9 @@
-use crate::lock::{LockExclusiveGuard, LockSharedGuard, RwLock};
 use std::hint;
 use std::sync::atomic::{AtomicPtr, Ordering};
+
 use uniset::{AtomicBitSet, BitSet};
+
+use crate::lock::{LockExclusiveGuard, LockSharedGuard, RwLock};
 
 /// A wake set which allows us to immutably set an index.
 pub(crate) struct WakeSet {
