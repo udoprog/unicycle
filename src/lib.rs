@@ -33,50 +33,56 @@
 //!
 //! ## Examples
 //!
-//! ```no_miri
-//! use tokio::time;
+//! ```
 //! use std::time::Duration;
+//!
+//! use tokio::time;
 //! use unicycle::FuturesUnordered;
 //!
-//! #[tokio::main]
-//! async fn main() {
-//!     let mut futures = FuturesUnordered::new();
+//! # #[cfg(miri)] fn main() {}
+//! # #[cfg(not(miri))]
+//! # #[tokio::main(flavor = "current_thread", start_paused = true)]
+//! # async fn main() {
+//! let mut futures = FuturesUnordered::new();
 //!
-//!     futures.push(time::sleep(Duration::from_secs(2)));
-//!     futures.push(time::sleep(Duration::from_secs(3)));
-//!     futures.push(time::sleep(Duration::from_secs(1)));
+//! futures.push(time::sleep(Duration::from_secs(2)));
+//! futures.push(time::sleep(Duration::from_secs(3)));
+//! futures.push(time::sleep(Duration::from_secs(1)));
 //!
-//!     while let Some(_) = futures.next().await {
-//!         println!("tick");
-//!     }
-//!
-//!     println!("done!");
+//! while let Some(_) = futures.next().await {
+//!     println!("tick");
 //! }
+//!
+//! println!("done!");
+//! # }
 //! ```
 //!
 //! [Unordered] types can be created from iterators:
 //!
-//! ```no_miri
-//! use tokio::time;
+//! ```
 //! use std::time::Duration;
+//!
+//! use tokio::time;
 //! use unicycle::FuturesUnordered;
 //!
-//! #[tokio::main]
-//! async fn main() {
-//!     let mut futures = Vec::new();
+//! # #[cfg(miri)] fn main() {}
+//! # #[cfg(not(miri))]
+//! # #[tokio::main(flavor = "current_thread", start_paused = true)]
+//! # async fn main() {
+//! let mut futures = Vec::new();
 //!
-//!     futures.push(time::sleep(Duration::from_secs(2)));
-//!     futures.push(time::sleep(Duration::from_secs(3)));
-//!     futures.push(time::sleep(Duration::from_secs(1)));
+//! futures.push(time::sleep(Duration::from_secs(2)));
+//! futures.push(time::sleep(Duration::from_secs(3)));
+//! futures.push(time::sleep(Duration::from_secs(1)));
 //!
-//!     let mut futures = futures.into_iter().collect::<FuturesUnordered<_>>();
+//! let mut futures = futures.into_iter().collect::<FuturesUnordered<_>>();
 //!
-//!     while let Some(_) = futures.next().await {
-//!         println!("tick");
-//!     }
-//!
-//!     println!("done!");
+//! while let Some(_) = futures.next().await {
+//!     println!("tick");
 //! }
+//!
+//! println!("done!");
+//! # }
 //! ```
 //!
 //! <br>
@@ -187,23 +193,26 @@ macro_rules! ready {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// use tokio::time;
+/// ```
 /// use std::time::Duration;
 ///
-/// #[tokio::main]
-/// async fn main() {
-///     let mut futures = unicycle::FuturesUnordered::new();
+/// use tokio::time;
 ///
-///     futures.push(time::sleep(Duration::from_secs(2)));
-///     futures.push(time::sleep(Duration::from_secs(3)));
-///     futures.push(time::sleep(Duration::from_secs(1)));
+/// # #[cfg(miri)] fn main() {}
+/// # #[cfg(not(miri))]
+/// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+/// # async fn main() {
+/// let mut futures = unicycle::FuturesUnordered::new();
 ///
-///     while let Some(_) = futures.next().await {
-///         println!("tick");
-///     }
+/// futures.push(time::sleep(Duration::from_secs(2)));
+/// futures.push(time::sleep(Duration::from_secs(3)));
+/// futures.push(time::sleep(Duration::from_secs(1)));
 ///
-///     println!("done!");
+/// while let Some(_) = futures.next().await {
+///     println!("tick");
+/// }
+///
+/// println!("done!");
 /// }
 /// ```
 pub type FuturesUnordered<T> = Unordered<T, Futures>;
@@ -239,23 +248,26 @@ impl Sentinel for Futures {}
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// use tokio::time;
+/// ```
 /// use std::time::Duration;
 ///
-/// #[tokio::main]
-/// async fn main() {
-///     let mut futures = unicycle::FuturesUnordered::new();
+/// use tokio::time;
 ///
-///     futures.push(time::sleep(Duration::from_secs(2)));
-///     futures.push(time::sleep(Duration::from_secs(3)));
-///     futures.push(time::sleep(Duration::from_secs(1)));
+/// # #[cfg(miri)] fn main() {}
+/// # #[cfg(not(miri))]
+/// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+/// # async fn main() {
+/// let mut futures = unicycle::FuturesUnordered::new();
 ///
-///     while let Some(_) = futures.next().await {
-///         println!("tick");
-///     }
+/// futures.push(time::sleep(Duration::from_secs(2)));
+/// futures.push(time::sleep(Duration::from_secs(3)));
+/// futures.push(time::sleep(Duration::from_secs(1)));
 ///
-///     println!("done!");
+/// while let Some(_) = futures.next().await {
+///     println!("tick");
+/// }
+///
+/// println!("done!");
 /// }
 /// ```
 pub struct Unordered<T, S>
@@ -308,25 +320,28 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust
-    /// use tokio::time;
+    /// ```
     /// use std::time::Duration;
+    ///
+    /// use tokio::time;
     /// use unicycle::FuturesUnordered;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let mut futures = FuturesUnordered::new();
+    /// # #[cfg(miri)] fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+    /// # async fn main() {
+    /// let mut futures = FuturesUnordered::new();
     ///
-    ///     futures.push(time::sleep(Duration::from_secs(2)));
-    ///     futures.push(time::sleep(Duration::from_secs(3)));
-    ///     futures.push(time::sleep(Duration::from_secs(1)));
+    /// futures.push(time::sleep(Duration::from_secs(2)));
+    /// futures.push(time::sleep(Duration::from_secs(3)));
+    /// futures.push(time::sleep(Duration::from_secs(1)));
     ///
-    ///     while let Some(_) = futures.next().await {
-    ///         println!("tick");
-    ///     }
-    ///
-    ///     println!("done!");
+    /// while let Some(_) = futures.next().await {
+    ///     println!("tick");
     /// }
+    ///
+    /// println!("done!");
+    /// # }
     /// ```
     pub fn next(&mut self) -> Next<'_, Self> {
         Next(self)
@@ -463,6 +478,7 @@ where
     ///
     /// ```
     /// use std::future::Ready;
+    ///
     /// use unicycle::FuturesUnordered;
     ///
     /// let mut futures = FuturesUnordered::<Ready<()>>::new();
@@ -479,6 +495,7 @@ where
     ///
     /// ```
     /// use std::future::Ready;
+    ///
     /// use unicycle::FuturesUnordered;
     ///
     /// let mut futures = FuturesUnordered::<Ready<()>>::new();
@@ -546,13 +563,16 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// use std::future::Future;
+    ///
     /// use unicycle::FuturesUnordered;
     /// use futures::future::poll_fn;
-    /// use std::future::Future as _;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
+    /// # #[cfg(miri)] fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+    /// # async fn main() {
     ///     let mut futures = FuturesUnordered::new();
     ///     let index = futures.push(async { 42 });
     ///
@@ -561,7 +581,7 @@ where
     ///     }).await;
     ///
     ///     assert_eq!(result, 42);
-    /// }
+    /// # }
     /// ```
     pub fn get_pin_mut(&mut self, index: usize) -> Option<Pin<&mut T>> {
         Some(self.slab.get_pin_mut(index)?.1)
@@ -572,13 +592,17 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
+    /// use std::pin::Pin;
+    /// use std::future::Future;
+    ///
     /// use unicycle::FuturesUnordered;
     /// use futures::future::{ready, poll_fn};
-    /// use std::{pin::Pin, future::Future as _};
     ///
-    /// #[tokio::main]
-    /// async fn main() {
+    /// # #[cfg(miri)] fn main() {}
+    /// # #[cfg(not(miri))]
+    /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+    /// # async fn main() {
     ///     let mut futures = FuturesUnordered::new();
     ///     let index = futures.push(ready(42));
     ///
@@ -587,7 +611,7 @@ where
     ///     }).await;
     ///
     ///     assert_eq!(result, 42);
-    /// }
+    /// # }
     /// ```
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T>
     where
@@ -688,28 +712,30 @@ cfg_futures_rs! {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// use tokio::{net::TcpListener, time};
-    /// use tokio_util::codec::{Framed, LengthDelimitedCodec};
+    /// ```no_run
     /// use std::error::Error;
     ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn Error>> {
-    ///     let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
-    ///     let mut clients = unicycle::StreamsUnordered::new();
+    /// use tokio::net::TcpListener;
+    /// use tokio::time;
+    /// use tokio_util::codec::{Framed, LengthDelimitedCodec};
     ///
-    ///     loop {
-    ///         tokio::select! {
-    ///             result = listener.accept() => {
-    ///                 let (stream, _) = result?;
-    ///                 clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
-    ///             },
-    ///             Some(frame) = clients.next() => {
-    ///                 println!("received frame: {:?}", frame);
-    ///             }
+    /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+    /// # async fn main() -> Result<(), Box<dyn Error>> {
+    /// let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
+    /// let mut clients = unicycle::StreamsUnordered::new();
+    ///
+    /// loop {
+    ///     tokio::select! {
+    ///         result = listener.accept() => {
+    ///             let (stream, _) = result?;
+    ///             clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
+    ///         },
+    ///         Some(frame) = clients.next() => {
+    ///             println!("received frame: {:?}", frame);
     ///         }
     ///     }
     /// }
+    /// # }
     /// ```
     pub type StreamsUnordered<T> = Unordered<T, Streams>;
 
@@ -718,31 +744,33 @@ cfg_futures_rs! {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// use tokio::{net::TcpListener, time};
-    /// use tokio_util::codec::{Framed, LengthDelimitedCodec};
+    /// ```no_run
     /// use std::error::Error;
     ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn Error>> {
-    ///     let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
-    ///     let mut clients = unicycle::IndexedStreamsUnordered::new();
+    /// use tokio::net::TcpListener;
+    /// use tokio::time;
+    /// use tokio_util::codec::{Framed, LengthDelimitedCodec};
     ///
-    ///     loop {
-    ///         tokio::select! {
-    ///             result = listener.accept() => {
-    ///                 let (stream, _) = result?;
-    ///                 clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
-    ///             },
-    ///             Some((index, frame)) = clients.next() => {
-    ///                 match frame {
-    ///                     Some(frame) => println!("{}: received frame: {:?}", index, frame),
-    ///                     None => println!("{}: client disconnected", index),
-    ///                 }
+    /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+    /// # async fn main() -> Result<(), Box<dyn Error>> {
+    /// let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
+    /// let mut clients = unicycle::IndexedStreamsUnordered::new();
+    ///
+    /// loop {
+    ///     tokio::select! {
+    ///         result = listener.accept() => {
+    ///             let (stream, _) = result?;
+    ///             clients.push(Framed::new(stream, LengthDelimitedCodec::new()));
+    ///         },
+    ///         Some((index, frame)) = clients.next() => {
+    ///             match frame {
+    ///                 Some(frame) => println!("{}: received frame: {:?}", index, frame),
+    ///                 None => println!("{}: client disconnected", index),
     ///             }
     ///         }
     ///     }
     /// }
+    /// # }
     /// ```
     pub type IndexedStreamsUnordered<T> = Unordered<T, IndexedStreams>;
 
@@ -751,26 +779,28 @@ cfg_futures_rs! {
         ///
         /// # Examples
         ///
-        /// ```rust
+        /// ```
         /// use tokio_stream::iter;
         /// use unicycle::StreamsUnordered;
         ///
-        /// #[tokio::main]
-        /// async fn main() {
-        ///     let mut streams = StreamsUnordered::new();
-        ///     assert!(streams.is_empty());
+        /// # #[cfg(miri)] fn main() {}
+        /// # #[cfg(not(miri))]
+        /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+        /// # async fn main() {
+        /// let mut streams = StreamsUnordered::new();
+        /// assert!(streams.is_empty());
         ///
-        ///     streams.push(iter(vec![1, 2, 3, 4]));
-        ///     streams.push(iter(vec![5, 6, 7, 8]));
+        /// streams.push(iter(vec![1, 2, 3, 4]));
+        /// streams.push(iter(vec![5, 6, 7, 8]));
         ///
-        ///     let mut received = Vec::new();
+        /// let mut received = Vec::new();
         ///
-        ///     while let Some(value) = streams.next().await {
-        ///         received.push(value);
-        ///     }
-        ///
-        ///     assert_eq!(vec![5, 1, 6, 2, 7, 3, 8, 4], received);
+        /// while let Some(value) = streams.next().await {
+        ///     received.push(value);
         /// }
+        ///
+        /// assert_eq!(vec![5, 1, 6, 2, 7, 3, 8, 4], received);
+        /// # }
         /// ```
         pub fn new() -> Self {
             Self::new_internal()
@@ -786,36 +816,38 @@ cfg_futures_rs! {
         ///
         /// # Examples
         ///
-        /// ```rust
+        /// ```
         /// use tokio_stream::iter;
         /// use unicycle::IndexedStreamsUnordered;
         ///
-        /// #[tokio::main]
-        /// async fn main() {
-        ///     let mut streams = IndexedStreamsUnordered::new();
-        ///     assert!(streams.is_empty());
+        /// # #[cfg(miri)] fn main() {}
+        /// # #[cfg(not(miri))]
+        /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+        /// # async fn main() {
+        /// let mut streams = IndexedStreamsUnordered::new();
+        /// assert!(streams.is_empty());
         ///
-        ///     streams.push(iter(vec![1, 2]));
-        ///     streams.push(iter(vec![5, 6]));
+        /// streams.push(iter(vec![1, 2]));
+        /// streams.push(iter(vec![5, 6]));
         ///
-        ///     let mut received = Vec::new();
+        /// let mut received = Vec::new();
         ///
-        ///     while let Some(value) = streams.next().await {
-        ///         received.push(value);
-        ///     }
-        ///
-        ///     assert_eq!(
-        ///         vec![
-        ///             (1, Some(5)),
-        ///             (0, Some(1)),
-        ///             (1, Some(6)),
-        ///             (0, Some(2)),
-        ///             (1, None),
-        ///             (0, None)
-        ///         ],
-        ///         received
-        ///     );
+        /// while let Some(value) = streams.next().await {
+        ///     received.push(value);
         /// }
+        ///
+        /// assert_eq!(
+        ///     vec![
+        ///         (1, Some(5)),
+        ///         (0, Some(1)),
+        ///         (1, Some(6)),
+        ///         (0, Some(2)),
+        ///         (1, None),
+        ///         (0, None)
+        ///     ],
+        ///     received
+        /// );
+        /// # }
         /// ```
         pub fn new() -> Self {
             Self::new_internal()

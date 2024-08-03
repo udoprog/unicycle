@@ -1,8 +1,13 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::sync::Arc;
+use std::thread;
 
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use crossbeam::queue::SegQueue;
-use futures::{channel::oneshot, executor::block_on, future, stream::StreamExt as _, task::Poll};
-use std::{sync::Arc, thread};
+use futures::channel::oneshot;
+use futures::executor::block_on;
+use futures::future;
+use futures::stream::StreamExt as _;
+use futures::task::Poll;
 
 pub fn polling_benchmark(c: &mut Criterion) {
     {
