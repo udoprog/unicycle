@@ -1,5 +1,11 @@
 #![cfg(feature = "futures-rs")]
 
+use std::{
+    pin::Pin,
+    sync::{atomic, Arc},
+    task,
+};
+
 use tokio_stream::iter;
 use unicycle::StreamsUnordered;
 
@@ -18,4 +24,47 @@ async fn test_unicycle_streams() {
     }
 
     assert_eq!(vec![5, 1, 6, 2, 7, 3, 8, 4], received);
+}
+
+// See #30 for details.
+#[tokio::test]
+async fn test_drop_with_stored_waker() {
+    struct Testee {
+        waker: Option<task::Waker>,
+        dropped: Arc<atomic::AtomicBool>,
+    }
+
+    impl futures::Stream for Testee {
+        type Item = u32;
+
+        fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> task::Poll<Option<u32>> {
+            println!("testee polled");
+            unsafe { self.get_unchecked_mut() }.waker = Some(cx.waker().clone());
+            task::Poll::Pending
+        }
+    }
+
+    impl Drop for Testee {
+        fn drop(&mut self) {
+            println!("testee dropped");
+            self.dropped.store(true, atomic::Ordering::SeqCst);
+        }
+    }
+
+    let mut streams = StreamsUnordered::new();
+
+    let dropped = Arc::new(atomic::AtomicBool::new(false));
+    streams.push(Testee {
+        waker: None,
+        dropped: dropped.clone(),
+    });
+
+    {
+        let fut = streams.next();
+        let res = futures::future::poll_immediate(fut).await;
+        assert!(res.is_none());
+    }
+
+    drop(streams);
+    assert!(dropped.load(atomic::Ordering::SeqCst));
 }

@@ -60,7 +60,7 @@ pub(crate) struct Header {
 
 impl Header {
     /// Construct a new waker.
-    pub(crate) fn new(shared: Arc<Shared>, index: usize) -> Self {
+    fn new(shared: Arc<Shared>, index: usize) -> Self {
         Self {
             shared,
             index,
@@ -200,15 +200,9 @@ impl<T> Storage<T> {
             None => return false,
         };
 
-        // SAFETY: We have mutable access to the given entry, but we are careful
-        // not to dereference the header mutably, since that might be shared.
-        unsafe {
-            let value = match *ptr::addr_of_mut!((*task.as_ptr()).entry) {
-                ref mut value @ Entry::Some(..) => value,
-                _ => return false,
-            };
-
-            *value = Entry::Vacant(self.next);
+        // SAFETY: The `task` pointer is valid, since we got it from the slab.
+        if !unsafe { make_slot_vacant(task, self.next) } {
+            return false;
         }
 
         self.len -= 1;
@@ -221,11 +215,18 @@ impl<T> Storage<T> {
         // SAFETY: We're just decrementing the reference count of each entry
         // before dropping the storage of the slab.
         unsafe {
-            for &entry in &self.tasks {
-                if entry.as_ref().header.decrement_ref() {
+            for &task in &self.tasks {
+                // We must drop a task's entry _before_ decrementing the reference counter
+                // because the task can be accessed by wakers in parallel now.
+                //
+                // Also, we violate the linked list of vacant slots by passing `0` here
+                // because the whole `tasks` vector will be cleared below anyway.
+                make_slot_vacant(task, 0);
+
+                if task.as_ref().header.decrement_ref() {
                     // SAFETY: We're the only ones holding a reference to the
-                    // entry, so it's safe to drop it.
-                    _ = Box::from_raw(entry.as_ptr());
+                    // task, so it's safe to drop it.
+                    _ = Box::from_raw(task.as_ptr());
                 }
             }
 
@@ -261,6 +262,24 @@ impl<T> Storage<T> {
             self.len += 1;
         }
     }
+}
+
+/// Returns `true` if the entry was removed, `false` otherwise.
+///
+/// # Safety
+/// * The `task` pointer must point to a valid entry.
+/// * A task's entry must be accessed only by one thread.
+unsafe fn make_slot_vacant<T>(task: NonNull<Task<T>>, next: usize) -> bool {
+    // SAFETY: We have mutable access to the given entry, but we are careful
+    // not to dereference the header mutably, since that might be shared.
+    let entry = unsafe { &mut *ptr::addr_of_mut!((*task.as_ptr()).entry) };
+
+    if !matches!(entry, Entry::Some(_)) {
+        return false;
+    }
+
+    *entry = Entry::Vacant(next);
+    true
 }
 
 impl<T> Default for Storage<T> {
