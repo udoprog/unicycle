@@ -55,6 +55,6 @@ async fn benchmark_oneshots_unicycle() {
         })
         .await;
 
-        println!("tick: {}", i);
+        println!("tick: {i}");
     }
 }
