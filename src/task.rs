@@ -320,20 +320,20 @@ mod tests {
     fn test_basic() {
         let mut slab = Storage::new();
 
-        assert!(!slab.remove(0).is_some());
+        assert!(slab.remove(0).is_none());
         let index = slab.insert(42);
         assert!(slab.remove(index).is_some());
-        assert!(!slab.remove(index).is_some());
+        assert!(slab.remove(index).is_none());
     }
 
     #[test]
     fn test_new() {
         let mut slab = Storage::new();
 
-        assert!(!slab.remove(0).is_some());
+        assert!(slab.remove(0).is_none());
         let index = slab.insert(42);
         assert!(slab.remove(index).is_some());
-        assert!(!slab.remove(index).is_some());
+        assert!(slab.remove(index).is_none());
     }
 
     #[test]
@@ -371,10 +371,10 @@ mod tests {
     fn test_remove() {
         let mut slab = Storage::new();
 
-        assert!(!slab.remove(0).is_some());
+        assert!(slab.remove(0).is_none());
         let index = slab.insert(42);
         assert!(slab.remove(index).is_some());
-        assert!(!slab.remove(index).is_some());
+        assert!(slab.remove(index).is_none());
     }
 
     #[test]

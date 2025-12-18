@@ -1,7 +1,6 @@
 use std::future::ready;
 
 use futures::FutureExt;
-use tokio_stream::StreamExt;
 
 use crate::FuturesUnordered;
 
@@ -32,7 +31,10 @@ async fn test_complete_unpinned() {
 
     let fut = futures.remove(idx).unwrap();
 
-    let mut res = futures.collect::<Vec<_>>().await;
+    let mut res = vec![];
+    while let Some(x) = futures.next().await {
+        res.push(x);
+    }
     res.sort();
     assert_eq!(res, vec![1, 2, 4]);
     assert_eq!(fut.await, 3);
