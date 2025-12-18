@@ -18,7 +18,7 @@ fn pin_slab_insert_get_remove_many() {
     for (expected, key) in keys.iter().copied() {
         let (_, value) = slab.get_pin_mut(key).expect("value to exist");
         assert_eq!(expected, **value.as_ref());
-        assert!(slab.remove(key));
+        assert!(slab.remove(key).is_some());
     }
 
     for (_, key) in keys.iter().copied() {

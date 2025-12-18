@@ -439,7 +439,7 @@ where
             let result = self::waker::poll_with_ref(header, move |cx| fut.poll(cx));
 
             if let Poll::Ready(result) = result {
-                let removed = slab.remove(index);
+                let removed = slab.remove(index).is_some();
                 debug_assert!(removed);
                 return Poll::Ready(Some(result));
             }
@@ -556,6 +556,41 @@ where
         }
 
         index
+    }
+
+    /// Remove the future or stream at the given index and return it.
+    ///
+    /// Returns `Some(T)` if the index was valid and contained a value,
+    /// `None` if the index is out of bounds or the slot is vacant.
+    ///
+    /// # Safety
+    /// Returned future must be either `T: Unpin` or be complete and no longer polled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use unicycle::FuturesUnordered;
+    ///
+    /// let mut futures = FuturesUnordered::new();
+    /// let index = futures.push(Box::pin(async { 42 }));
+    ///
+    /// let removed = futures.remove(index);
+    /// assert!(removed.is_some());
+    /// assert!(futures.is_empty());
+    /// ```
+    pub fn remove(&mut self, index: usize) -> Option<T>
+    where
+        T: Unpin,
+    {
+        self.slab.remove(index)
+    }
+
+    /// See [Unordered::remove] for details. This function differ that it allows removing `T: !Unpin` as well.
+    ///
+    /// # Safety
+    /// Returned future must complete and never polled.
+    pub unsafe fn remove_unchecked(&mut self, index: usize) -> Option<T> {
+        self.slab.remove(index)
     }
 
     /// Get a pinned mutable reference to the stream or future at the given
@@ -919,7 +954,7 @@ cfg_futures_rs! {
                             return Poll::Ready(Some(value));
                         }
                         None => {
-                            let removed = slab.remove(index);
+                            let removed = slab.remove(index).is_some();
                             debug_assert!(removed);
                         }
                     }
@@ -989,7 +1024,7 @@ cfg_futures_rs! {
                         }
                         None => {
                             cx.waker().wake_by_ref();
-                            let removed = slab.remove(index);
+                            let removed = slab.remove(index).is_some();
                             debug_assert!(removed);
                             return Poll::Ready(Some((index, None)));
                         }

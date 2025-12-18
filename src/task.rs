@@ -188,26 +188,21 @@ impl<T> Storage<T> {
 
     /// Remove the key from the slab.
     ///
-    /// Returns `true` if the entry was removed, `false` otherwise.
-    /// Removing a key which does not exist has no effect, and `false` will be
+    /// Returns `Some(value)` if the entry was removed, `None` otherwise.
+    /// Removing a key which does not exist has no effect, and `None` will be
     /// returned.
     ///
     /// We need to take care that we don't move it, hence we only perform
     /// operations over pointers below.
-    pub(crate) fn remove(&mut self, key: usize) -> bool {
-        let task = match self.tasks.get(key) {
-            Some(entry) => *entry,
-            None => return false,
-        };
+    pub(crate) fn remove(&mut self, key: usize) -> Option<T> {
+        let task = *self.tasks.get(key)?;
 
         // SAFETY: The `task` pointer is valid, since we got it from the slab.
-        if !unsafe { make_slot_vacant(task, self.next) } {
-            return false;
-        }
+        let value = unsafe { take_slot(task, self.next) }?;
 
         self.len -= 1;
         self.next = key;
-        true
+        Some(value)
     }
 
     /// Clear all available data in the PinSlot.
@@ -221,7 +216,7 @@ impl<T> Storage<T> {
                 //
                 // Also, we violate the linked list of vacant slots by passing `0` here
                 // because the whole `tasks` vector will be cleared below anyway.
-                make_slot_vacant(task, 0);
+                take_slot(task, 0);
 
                 if task.as_ref().header.decrement_ref() {
                     // SAFETY: We're the only ones holding a reference to the
@@ -264,22 +259,26 @@ impl<T> Storage<T> {
     }
 }
 
-/// Returns `true` if the entry was removed, `false` otherwise.
+/// Takes the value from the slot and makes it vacant.
+/// Returns `Some(value)` if the entry contained a value, `None` otherwise.
 ///
 /// # Safety
 /// * The `task` pointer must point to a valid entry.
 /// * A task's entry must be accessed only by one thread.
-unsafe fn make_slot_vacant<T>(task: NonNull<Task<T>>, next: usize) -> bool {
+unsafe fn take_slot<T>(task: NonNull<Task<T>>, next: usize) -> Option<T> {
     // SAFETY: We have mutable access to the given entry, but we are careful
     // not to dereference the header mutably, since that might be shared.
     let entry = unsafe { &mut *ptr::addr_of_mut!((*task.as_ptr()).entry) };
 
-    if !matches!(entry, Entry::Some(_)) {
-        return false;
+    match entry {
+        Entry::Some(_) => {
+            let Entry::Some(value) = std::mem::replace(entry, Entry::Vacant(next)) else {
+                unreachable!()
+            };
+            Some(value)
+        }
+        _ => None,
     }
-
-    *entry = Entry::Vacant(next);
-    true
 }
 
 impl<T> Default for Storage<T> {
@@ -321,20 +320,20 @@ mod tests {
     fn test_basic() {
         let mut slab = Storage::new();
 
-        assert!(!slab.remove(0));
+        assert!(!slab.remove(0).is_some());
         let index = slab.insert(42);
-        assert!(slab.remove(index));
-        assert!(!slab.remove(index));
+        assert!(slab.remove(index).is_some());
+        assert!(!slab.remove(index).is_some());
     }
 
     #[test]
     fn test_new() {
         let mut slab = Storage::new();
 
-        assert!(!slab.remove(0));
+        assert!(!slab.remove(0).is_some());
         let index = slab.insert(42);
-        assert!(slab.remove(index));
-        assert!(!slab.remove(index));
+        assert!(slab.remove(index).is_some());
+        assert!(!slab.remove(index).is_some());
     }
 
     #[test]
@@ -372,10 +371,10 @@ mod tests {
     fn test_remove() {
         let mut slab = Storage::new();
 
-        assert!(!slab.remove(0));
+        assert!(!slab.remove(0).is_some());
         let index = slab.insert(42);
-        assert!(slab.remove(index));
-        assert!(!slab.remove(index));
+        assert!(slab.remove(index).is_some());
+        assert!(!slab.remove(index).is_some());
     }
 
     #[test]
