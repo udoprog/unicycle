@@ -439,7 +439,7 @@ where
             let result = self::waker::poll_with_ref(header, move |cx| fut.poll(cx));
 
             if let Poll::Ready(result) = result {
-                let removed = slab.remove(index).is_some();
+                let removed = slab.remove_in_place(index);
                 debug_assert!(removed);
                 return Poll::Ready(Some(result));
             }
@@ -563,9 +563,6 @@ where
     /// Returns `Some(T)` if the index was valid and contained a value,
     /// `None` if the index is out of bounds or the slot is vacant.
     ///
-    /// # Safety
-    /// Returned future must be either `T: Unpin` or be complete and no longer polled.
-    ///
     /// # Examples
     ///
     /// ```
@@ -585,12 +582,10 @@ where
         self.slab.remove(index)
     }
 
-    /// See [Unordered::remove] for details. This function differ that it allows removing `T: !Unpin` as well.
-    ///
-    /// # Safety
-    /// Returned future must complete and never polled.
-    pub unsafe fn remove_unchecked(&mut self, index: usize) -> Option<T> {
-        self.slab.remove(index)
+    /// See [Unordered::remove] for details. This function differ that
+    /// it also allows removing `T: !Unpin` futures without returning them.
+    pub fn remove_in_place(&mut self, index: usize) -> bool {
+        self.slab.remove_in_place(index)
     }
 
     /// Get a pinned mutable reference to the stream or future at the given
@@ -954,7 +949,7 @@ cfg_futures_rs! {
                             return Poll::Ready(Some(value));
                         }
                         None => {
-                            let removed = slab.remove(index).is_some();
+                            let removed = slab.remove_in_place(index);
                             debug_assert!(removed);
                         }
                     }
@@ -1024,7 +1019,7 @@ cfg_futures_rs! {
                         }
                         None => {
                             cx.waker().wake_by_ref();
-                            let removed = slab.remove(index).is_some();
+                            let removed = slab.remove_in_place(index);
                             debug_assert!(removed);
                             return Poll::Ready(Some((index, None)));
                         }
