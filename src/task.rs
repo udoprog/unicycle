@@ -188,13 +188,35 @@ impl<T> Storage<T> {
 
     /// Remove the key from the slab.
     ///
+    /// Returns `Some(value)` if the entry was removed, `None` otherwise.
+    /// Removing a key which does not exist has no effect, and `None` will be
+    /// returned.
+    ///
+    /// We need to take care that we don't move it, hence we only perform
+    /// operations over pointers below.
+    pub(crate) fn remove(&mut self, key: usize) -> Option<T>
+    where
+        T: Unpin,
+    {
+        let task = *self.tasks.get(key)?;
+
+        // SAFETY: The `task` pointer is valid, since we got it from the slab.
+        let value = unsafe { take_slot(task, self.next) }?;
+
+        self.len -= 1;
+        self.next = key;
+        Some(value)
+    }
+
+    /// Remove the key from the slab.
+    ///
     /// Returns `true` if the entry was removed, `false` otherwise.
     /// Removing a key which does not exist has no effect, and `false` will be
     /// returned.
     ///
     /// We need to take care that we don't move it, hence we only perform
     /// operations over pointers below.
-    pub(crate) fn remove(&mut self, key: usize) -> bool {
+    pub(crate) fn remove_in_place(&mut self, key: usize) -> bool {
         let task = match self.tasks.get(key) {
             Some(entry) => *entry,
             None => return false,
@@ -264,6 +286,28 @@ impl<T> Storage<T> {
     }
 }
 
+/// Takes the value from the slot and makes it vacant.
+/// Returns `Some(value)` if the entry contained a value, `None` otherwise.
+///
+/// # Safety
+/// * The `task` pointer must point to a valid entry.
+/// * A task's entry must be accessed only by one thread.
+unsafe fn take_slot<T>(task: NonNull<Task<T>>, next: usize) -> Option<T> {
+    // SAFETY: We have mutable access to the given entry, but we are careful
+    // not to dereference the header mutably, since that might be shared.
+    let entry = unsafe { &mut *ptr::addr_of_mut!((*task.as_ptr()).entry) };
+
+    match entry {
+        Entry::Some(_) => {
+            let Entry::Some(value) = std::mem::replace(entry, Entry::Vacant(next)) else {
+                unreachable!()
+            };
+            Some(value)
+        }
+        _ => None,
+    }
+}
+
 /// Returns `true` if the entry was removed, `false` otherwise.
 ///
 /// # Safety
@@ -321,20 +365,20 @@ mod tests {
     fn test_basic() {
         let mut slab = Storage::new();
 
-        assert!(!slab.remove(0));
+        assert!(!slab.remove_in_place(0));
         let index = slab.insert(42);
-        assert!(slab.remove(index));
-        assert!(!slab.remove(index));
+        assert!(slab.remove_in_place(index));
+        assert!(!slab.remove_in_place(index));
     }
 
     #[test]
     fn test_new() {
         let mut slab = Storage::new();
 
-        assert!(!slab.remove(0));
+        assert!(!slab.remove_in_place(0));
         let index = slab.insert(42);
-        assert!(slab.remove(index));
-        assert!(!slab.remove(index));
+        assert!(slab.remove_in_place(index));
+        assert!(!slab.remove_in_place(index));
     }
 
     #[test]
@@ -372,10 +416,10 @@ mod tests {
     fn test_remove() {
         let mut slab = Storage::new();
 
-        assert!(!slab.remove(0));
+        assert!(!slab.remove_in_place(0));
         let index = slab.insert(42);
-        assert!(slab.remove(index));
-        assert!(!slab.remove(index));
+        assert!(slab.remove_in_place(index));
+        assert!(!slab.remove_in_place(index));
     }
 
     #[test]
