@@ -172,8 +172,10 @@ use std::future::Future;
 use std::iter;
 use std::marker;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use self::shared::Shared;
 use self::task::Storage;
 use self::wake_set::WakeSet;
 #[cfg(feature = "futures-rs")]
@@ -632,23 +634,39 @@ where
     S: Sentinel,
 {
     fn drop(&mut self) {
+        /// Drops the alternate wake set, whether we leave [`Unordered::drop`]
+        /// normally or by unwinding out of a child future's `Drop`.
+        struct Alternate {
+            shared: Arc<Shared>,
+            alternate: *mut WakeSet,
+        }
+
+        impl Drop for Alternate {
+            fn drop(&mut self) {
+                // We intend to drop both wake sets. Therefore we need exclusive
+                // access to both wakers. Unfortunately that means that at this
+                // point, any call to wakes will have to serialize behind the
+                // shared wake set while the alternate set is being dropped.
+                let _write = self.shared.wake_set.prevent_drop_write();
+
+                // Safety: we uniquely own `alternate`, so we are responsible for
+                // dropping it. This is asserted when we swap it out during a poll
+                // by calling WakeSet::lock_exclusive. We are also the _only_ one
+                // swapping `wake_alternative`, so we know that can't happen here.
+                unsafe {
+                    drop(Box::from_raw(self.alternate));
+                }
+            }
+        }
+
+        let _alternate = Alternate {
+            shared: self.slab.shared().clone(),
+            alternate: self.alternate,
+        };
+
         // Cancel all child futures in an attempt to prevent them from
         // attempting to call wake on the shared wake set.
         self.slab.clear();
-
-        // We intend to drop both wake sets. Therefore we need exclusive access
-        // to both wakers. Unfortunately that means that at this point, any call
-        // to wakes will have to serialize behind the shared wake set while the
-        // alternate set is being dropped.
-        let _write = self.slab.shared().wake_set.prevent_drop_write();
-
-        // Safety: we uniquely own `alternate`, so we are responsible for
-        // dropping it. This is asserted when we swap it out during a poll by
-        // calling WakeSet::lock_exclusive. We are also the _only_ one
-        // swapping `wake_alternative`, so we know that can't happen here.
-        unsafe {
-            drop(Box::from_raw(self.alternate));
-        }
     }
 }
 

@@ -8,6 +8,7 @@
 
 #![allow(clippy::manual_map)]
 
+use std::mem;
 use std::pin::Pin;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -212,26 +213,52 @@ impl<T> Storage<T> {
 
     /// Clear all available data in the PinSlot.
     pub(crate) fn clear(&mut self) {
-        // SAFETY: We're just decrementing the reference count of each entry
-        // before dropping the storage of the slab.
-        unsafe {
-            for &task in &self.tasks {
-                // We must drop a task's entry _before_ decrementing the reference counter
-                // because the task can be accessed by wakers in parallel now.
-                //
-                // Also, we violate the linked list of vacant slots by passing `0` here
-                // because the whole `tasks` vector will be cleared below anyway.
-                make_slot_vacant(task, 0);
+        /// Tracks how far `clear` got, so that a panic out of a task's `Drop`
+        /// doesn't strand the tasks we haven't reached yet.
+        struct Guard<T> {
+            tasks: Vec<NonNull<Task<T>>>,
+            index: usize,
+        }
 
-                if task.as_ref().header.decrement_ref() {
-                    // SAFETY: We're the only ones holding a reference to the
-                    // task, so it's safe to drop it.
-                    _ = Box::from_raw(task.as_ptr());
+        impl<T> Guard<T> {
+            /// Free every task we haven't freed yet.
+            ///
+            /// Dropping a task runs arbitrary user code which might panic. The
+            /// index is advanced before the task is touched, so neither this
+            /// call nor the one in `Drop` can visit the same task twice.
+            fn run(&mut self) {
+                while let Some(&task) = self.tasks.get(self.index) {
+                    self.index += 1;
+
+                    // SAFETY: The `task` pointer came from the slab, and since
+                    // the index has been advanced this is the only pass that
+                    // will ever look at it.
+                    unsafe {
+                        free_task(task);
+                    }
                 }
             }
-
-            self.tasks.set_len(0);
         }
+
+        impl<T> Drop for Guard<T> {
+            fn drop(&mut self) {
+                self.run();
+            }
+        }
+
+        // Detach the tasks *before* touching them. Unwinding out of a task's
+        // `Drop` runs `Drop for Storage`, which calls `clear` again; if the
+        // vector still referenced the tasks we already deallocated, that second
+        // pass would use them after free.
+        let mut guard = Guard {
+            tasks: mem::take(&mut self.tasks),
+            index: 0,
+        };
+
+        self.len = 0;
+        self.next = 0;
+
+        guard.run();
     }
 
     /// Insert a value at the given slot.
@@ -264,6 +291,46 @@ impl<T> Storage<T> {
     }
 }
 
+/// Drop a task's entry, then release our reference to the task, freeing it if
+/// it was the last one.
+///
+/// # Safety
+/// * The `task` pointer must point to a valid task.
+/// * A task's entry must be accessed only by one thread.
+/// * The caller must hold a reference to `task` and must not use it again.
+unsafe fn free_task<T>(task: NonNull<Task<T>>) {
+    /// Releases our reference to the task even if the entry's `Drop` panics,
+    /// so that an unwind can't strand the allocation.
+    struct Release<T>(NonNull<Task<T>>);
+
+    impl<T> Drop for Release<T> {
+        fn drop(&mut self) {
+            // SAFETY: The caller guarantees the task is valid and that this
+            // runs exactly once for the reference they hold.
+            unsafe {
+                if self.0.as_ref().header.decrement_ref() {
+                    // SAFETY: We're the only ones holding a reference to the
+                    // task, so it's safe to drop it.
+                    _ = Box::from_raw(self.0.as_ptr());
+                }
+            }
+        }
+    }
+
+    let _release = Release(task);
+
+    // We must drop a task's entry _before_ decrementing the reference counter
+    // because the task can be accessed by wakers in parallel now.
+    //
+    // Also, we violate the linked list of vacant slots by passing `0` here
+    // because the whole `tasks` vector is being discarded anyway.
+    //
+    // SAFETY: Guaranteed by the caller.
+    unsafe {
+        make_slot_vacant(task, 0);
+    }
+}
+
 /// Returns `true` if the entry was removed, `false` otherwise.
 ///
 /// # Safety
@@ -272,13 +339,40 @@ impl<T> Storage<T> {
 unsafe fn make_slot_vacant<T>(task: NonNull<Task<T>>, next: usize) -> bool {
     // SAFETY: We have mutable access to the given entry, but we are careful
     // not to dereference the header mutably, since that might be shared.
-    let entry = unsafe { &mut *ptr::addr_of_mut!((*task.as_ptr()).entry) };
+    let entry = unsafe { ptr::addr_of_mut!((*task.as_ptr()).entry) };
 
-    if !matches!(entry, Entry::Some(_)) {
-        return false;
+    // SAFETY: Guaranteed by the caller.
+    let value = match unsafe { &mut *entry } {
+        Entry::Some(value) => ptr::addr_of_mut!(*value),
+        _ => return false,
+    };
+
+    /// Marks the slot vacant once its value has been dropped, including when
+    /// the value's `Drop` panics. A slot left holding a dropped value behind a
+    /// `Some` discriminant would be handed out again by whoever unwinds past
+    /// us.
+    struct Vacate<T>(*mut Entry<T>, usize);
+
+    impl<T> Drop for Vacate<T> {
+        fn drop(&mut self) {
+            // SAFETY: The value has been dropped in place, so we overwrite it
+            // without running its destructor a second time.
+            unsafe {
+                ptr::write(self.0, Entry::Vacant(self.1));
+            }
+        }
     }
 
-    *entry = Entry::Vacant(next);
+    let _vacate = Vacate(entry, next);
+
+    // Drop in place rather than moving the value out, since the slab hands out
+    // pinned references to it.
+    //
+    // SAFETY: The slot holds a live value which we have exclusive access to.
+    unsafe {
+        ptr::drop_in_place(value);
+    }
+
     true
 }
 
