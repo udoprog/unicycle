@@ -89,6 +89,8 @@ mod internals {
 #[cfg(feature = "parking-lot")]
 mod internals {
     //! Implementation using raw locks from parking_lot.
+    // parking_lot's guard state is a stateless marker, so it is not kept
+    // between locking and unlocking but recreated on unlock.
     use lock_api::RawRwLock as _;
 
     /// A simplified RwLock implementation which only supports voluntary locking.
@@ -114,7 +116,7 @@ mod internals {
 
         /// Try to lock exclusively.
         pub(crate) fn try_lock_exclusive_immediate(&self) -> bool {
-            self.state.try_lock_exclusive()
+            self.state.try_lock_exclusive().is_some()
         }
 
         /// Unlock shared access.
@@ -124,12 +126,12 @@ mod internals {
         /// This method may only be called if an exclusive lock is held in the
         /// current context.
         pub(crate) unsafe fn unlock_exclusive_immediate(&self) {
-            self.state.unlock_exclusive()
+            self.state.unlock_exclusive(Default::default())
         }
 
         /// Try to lock shared.
         pub(crate) fn try_lock_shared_immediate(&self) -> bool {
-            self.state.try_lock_shared()
+            self.state.try_lock_shared().is_some()
         }
 
         /// Unlock shared access.
@@ -139,7 +141,7 @@ mod internals {
         /// This method may only be called if a shared lock is held in the
         /// current context.
         pub(crate) unsafe fn unlock_shared_immediate(&self) {
-            self.state.unlock_shared()
+            self.state.unlock_shared(Default::default())
         }
     }
 }
