@@ -20,21 +20,21 @@ mod internals {
         /// Construct a new lock that is already locked.
         pub(crate) fn locked() -> Self {
             Self {
-                state: AtomicIsize::new(-std::isize::MAX),
+                state: AtomicIsize::new(-isize::MAX),
             }
         }
 
         /// Try to lock exclusively.
         pub(crate) fn try_lock_exclusive_immediate(&self) -> bool {
-            let last = self.state.fetch_sub(std::isize::MAX, Ordering::AcqRel);
+            let last = self.state.fetch_sub(isize::MAX, Ordering::AcqRel);
 
             if last != 0 {
                 // try again later
-                self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
+                self.state.fetch_add(isize::MAX, Ordering::AcqRel);
                 return false;
             }
 
-            if last == std::isize::MIN {
+            if last == isize::MIN {
                 // Sentinel value in case we observe a value that has wrapped
                 // around. This is such a abnormal state that there's not much
                 // we _can_ do. Abort the process.
@@ -51,8 +51,8 @@ mod internals {
         /// This method may only be called if an exclusive lock is held in the
         /// current context.
         pub(crate) unsafe fn unlock_exclusive_immediate(&self) {
-            let old = self.state.fetch_add(std::isize::MAX, Ordering::AcqRel);
-            debug_assert!(old >= -std::isize::MAX && old < 0);
+            let old = self.state.fetch_add(isize::MAX, Ordering::AcqRel);
+            debug_assert!((-isize::MAX..0).contains(&old));
         }
 
         /// Try to lock shared.
@@ -64,7 +64,7 @@ mod internals {
                 return false;
             }
 
-            if existing == std::isize::MAX {
+            if existing == isize::MAX {
                 // Sentinel value in case we observe a value that has wrapped
                 // around. This is such a abnormal state that there's not much
                 // we _can_ do. Abort the process.
